@@ -16,7 +16,7 @@ name: nctl Helm policy scan (PR)
 
 on:
   pull_request:
-    branches: [exceptions-in-pipelines]
+    branches: [main, master]
     # Uncomment to limit to chart paths:
     # paths:
     #   - 'charts/**'
@@ -50,8 +50,16 @@ jobs:
         with:
           fetch-depth: 0
 
+      # Full CLI (includes `nctl ai`). The marketplace action pinned an older build without `ai`.
+      # See: https://downloads.nirmata.io/nctl/downloads/
       - name: Install nctl
-        uses: nirmata/action-install-nctl-scan@v0.0.12
+        run: |
+          set -euo pipefail
+          curl -fsSL https://downloads.nirmata.io/nctl/install.sh | bash
+          NCTL_BIN="$(command -v nctl)"
+          echo "$(dirname "${NCTL_BIN}")" >> "${GITHUB_PATH}"
+          nctl version
+          nctl ai --help >/dev/null
 
       - name: Authenticate nctl (optional)
         env:
