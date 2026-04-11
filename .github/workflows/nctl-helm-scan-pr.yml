@@ -10,7 +10,7 @@ name: nctl Helm policy scan (PR)
 
 on:
   pull_request:
-    branches: [main, master]
+    branches: [exceptions-in-pipelines]
     # Uncomment to limit to chart paths:
     # paths:
     #   - 'charts/**'
