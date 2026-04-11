@@ -5,12 +5,17 @@
 #   NIRMATA_TOKEN — API token
 # Optional:
 #   NIRMATA_USERID — if your nctl version requires login with userid (email)
+#
+# Repository variable (recommended):
+#   HELM_CHART_PATH — directory that contains Chart.yaml (e.g. charts/myapp). If unset, defaults to ".".
+#   Using "." scans the whole repo; any large *.zip (e.g. nctl.zip) can trigger:
+#   Error: chart file "nctl.zip" is larger than the maximum file size 5242880
 
 name: nctl Helm policy scan (PR)
 
 on:
   pull_request:
-    branches: [exceptions-in-pipelines]
+    branches: [main, master]
     # Uncomment to limit to chart paths:
     # paths:
     #   - 'charts/**'
@@ -28,6 +33,8 @@ env:
   NIRMATA_URL: ${{ secrets.NIRMATA_URL }}
   NIRMATA_TOKEN: ${{ secrets.NIRMATA_TOKEN }}
   POLICY_SETS: pss-baseline,pss-restricted
+  # Set in: Settings → Secrets and variables → Actions → Variables → HELM_CHART_PATH
+  CHART_PATH: ${{ vars.HELM_CHART_PATH != '' && vars.HELM_CHART_PATH || '.' }}
 
 jobs:
   scan:
@@ -52,13 +59,28 @@ jobs:
             nctl login --url "${NIRMATA_URL}" --userid "${NIRMATA_USERID}" --token "${NIRMATA_TOKEN}"
           fi
 
+      # Scanning the whole repo (-r .) makes nctl treat *.zip files as chart packages; large zips fail with a 5MB limit.
+      # Prefer HELM_CHART_PATH pointing at the folder that contains Chart.yaml.
+      - name: Prepare scan path
+        run: |
+          set -euo pipefail
+          echo "CHART_PATH=${CHART_PATH}"
+          if [[ ! -d "${CHART_PATH}" ]]; then
+            echo "::error::HELM_CHART_PATH is not a directory: ${CHART_PATH}"
+            exit 1
+          fi
+          if [[ "${CHART_PATH}" == "." ]] && [[ -f nctl.zip ]]; then
+            echo "::warning::Removing nctl.zip at repository root so the scan can run (exceeds nctl's 5MB chart package limit). Prefer setting repo variable HELM_CHART_PATH to your chart directory."
+            rm -f nctl.zip
+          fi
+
       - name: Scan Helm chart
         id: scan
         continue-on-error: true
         run: |
           set -euo pipefail
           set -o pipefail
-          nctl scan helm -r . --policy-sets "${POLICY_SETS}" -o json | tee report.json
+          nctl scan helm -r "${CHART_PATH}" --policy-sets "${POLICY_SETS}" -o json | tee report.json
 
       - name: Summarize report for Actions UI
         if: always()
