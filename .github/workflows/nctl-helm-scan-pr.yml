@@ -1,4 +1,5 @@
-# Option A: Scan Helm chart on every PR; publish violations to job summary, artifact, and PR comment.
+# Option A: Scan Helm chart on every PR; publish violations to job summary, artifacts, and PR comment.
+# When violations exist, nctl scan typically exits with code 1 — that means "findings present", not a crash.
 #
 # Required repository secrets:
 #   NIRMATA_URL   — e.g. https://www.nirmata.io
@@ -35,11 +36,13 @@ env:
   POLICY_SETS: pss-baseline,pss-restricted
   # Set in: Settings → Secrets and variables → Actions → Variables → HELM_CHART_PATH
   CHART_PATH: ${{ vars.HELM_CHART_PATH != '' && vars.HELM_CHART_PATH || '.' }}
+  # Output folder for nctl ai–generated PolicyException YAML (optional override)
+  POLICYEXCEPTION_DIR: ${{ vars.POLICYEXCEPTION_DIR != '' && vars.POLICYEXCEPTION_DIR || 'policyexceptions' }}
 
 jobs:
   scan:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
 
     steps:
       - name: Checkout
@@ -102,6 +105,10 @@ jobs:
             exit 0
           fi
 
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "> **Note:** If the scan step shows exit code **1**, that usually means **policy violations were found** (expected for a failing policy result). It does not mean the scanner failed to produce \`report.json\`." >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+
           # Human-readable excerpt (tune jq once you confirm your report schema)
           echo "### Report excerpt" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
@@ -118,18 +125,84 @@ jobs:
           path: report.json
           if-no-files-found: warn
 
+      - name: Generate PolicyException YAML with nctl ai
+        id: policy_exceptions
+        if: hashFiles('report.json') != ''
+        continue-on-error: true
+        env:
+          POLICYEXCEPTION_DIR: ${{ env.POLICYEXCEPTION_DIR }}
+        run: |
+          set -euo pipefail
+          mkdir -p "${POLICYEXCEPTION_DIR}"
+          cat > nctl-ai-policyexceptions-prompt.txt << EOF
+          Read the Helm policy scan results in report.json in the current working directory.
+
+          Based on the violations in report.json, generate Kyverno PolicyException YAML manifests for each individual Kubernetes resource that has violations (one PolicyException per resource or per logical group as appropriate).
+
+          Use a valid PolicyException apiVersion/kind (e.g. kyverno.io/v2beta1 PolicyException) appropriate for modern Kyverno.
+
+          Write all generated YAML files under the directory: ${POLICYEXCEPTION_DIR}/
+          Use clear file names (e.g. including resource kind and name).
+          EOF
+          set +e
+          nctl ai --new-session \
+            --allowed-dirs "$(pwd)" \
+            --prompt "$(cat nctl-ai-policyexceptions-prompt.txt)" \
+            --skip-permission-checks \
+            --force
+          ai_exit=$?
+          set -e
+          if [[ "${ai_exit}" -eq 0 ]]; then
+            echo "ai_success=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "ai_success=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::nctl ai exited with ${ai_exit}; see log above."
+          fi
+          exit 0
+
+      - name: Upload PolicyException YAML artifact
+        if: always() && steps.policy_exceptions.outputs.ai_success == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: policyexceptions-${{ github.run_id }}
+          path: ${{ env.POLICYEXCEPTION_DIR }}
+          if-no-files-found: warn
+
+      - name: PolicyException summary
+        if: always()
+        run: |
+          {
+            echo ""
+            echo "### PolicyException generation (nctl ai)"
+            echo ""
+          } >> "$GITHUB_STEP_SUMMARY"
+          if [[ "${{ steps.policy_exceptions.outputs.ai_success }}" == "true" ]]; then
+            echo "Generated YAML uploaded as artifact **policyexceptions-${{ github.run_id }}**." >> "$GITHUB_STEP_SUMMARY"
+          elif [[ "${{ steps.policy_exceptions.outcome }}" == "skipped" ]]; then
+            echo "_Skipped (no report.json)._ " >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "_Generation did not succeed — see the **Generate PolicyException YAML with nctl ai** step log._" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
       - name: Comment on PR with summary
         if: always() && github.event_name == 'pull_request'
         uses: actions/github-script@v7
         env:
           POLICY_SETS: ${{ env.POLICY_SETS }}
+          AI_SUCCESS: ${{ steps.policy_exceptions.outputs.ai_success }}
         with:
           script: |
             const fs = require('fs');
             const path = 'report.json';
             let body = '## nctl Helm policy scan\n\n';
             body += `Policy sets: \`${process.env.POLICY_SETS}\`\n`;
-            body += `[View job summary and download **report.json** artifact](${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID})\n\n`;
+            body += `[Workflow run (summary + artifacts)](${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID})\n\n`;
+            body += '_If the scan step exits with **1**, that usually means **violations were found** (not a broken scan), as long as `report.json` was produced._\n\n';
+            if (process.env.AI_SUCCESS === 'true') {
+              body += `**PolicyException YAML:** download artifact **policyexceptions-${process.env.GITHUB_RUN_ID}** from this run.\n\n`;
+            } else if (process.env.AI_SUCCESS === 'false') {
+              body += '_PolicyException generation (nctl ai) did not complete successfully — see the workflow log._\n\n';
+            }
 
             try {
               const raw = fs.readFileSync(path, 'utf8');
