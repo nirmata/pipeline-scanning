@@ -1,0 +1,151 @@
+# Option A: Scan Helm chart on every PR; publish violations to job summary, artifact, and PR comment.
+#
+# Required repository secrets:
+#   NIRMATA_URL   — e.g. https://www.nirmata.io
+#   NIRMATA_TOKEN — API token
+# Optional:
+#   NIRMATA_USERID — if your nctl version requires login with userid (email)
+
+name: nctl Helm policy scan (PR)
+
+on:
+  pull_request:
+    branches: [main, master]
+    # Uncomment to limit to chart paths:
+    # paths:
+    #   - 'charts/**'
+    #   - '.github/workflows/nctl-helm-scan-pr.yml'
+
+concurrency:
+  group: nctl-helm-scan-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  pull-requests: write
+
+env:
+  NIRMATA_URL: ${{ secrets.NIRMATA_URL }}
+  NIRMATA_TOKEN: ${{ secrets.NIRMATA_TOKEN }}
+  POLICY_SETS: pss-baseline,pss-restricted
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install nctl
+        uses: nirmata/action-install-nctl-scan@v0.0.12
+
+      - name: Authenticate nctl (optional)
+        env:
+          NIRMATA_USERID: ${{ secrets.NIRMATA_USERID }}
+        run: |
+          set -euo pipefail
+          if [ -n "${NIRMATA_USERID:-}" ]; then
+            nctl login --url "${NIRMATA_URL}" --userid "${NIRMATA_USERID}" --token "${NIRMATA_TOKEN}"
+          fi
+
+      - name: Scan Helm chart
+        id: scan
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          set -o pipefail
+          nctl scan helm -r . --policy-sets "${POLICY_SETS}" -o json | tee report.json
+
+      - name: Summarize report for Actions UI
+        if: always()
+        run: |
+          set -euo pipefail
+          {
+            echo "## nctl Helm policy scan"
+            echo ""
+            echo "| Field | Value |"
+            echo "| --- | --- |"
+            echo "| Policy sets | \`${POLICY_SETS}\` |"
+            echo "| Commit | \`${{ github.sha }}\` |"
+            echo "| Workflow | [$GITHUB_RUN_ID]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID) |"
+            echo ""
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          if [[ ! -f report.json ]]; then
+            echo "_report.json was not produced._" >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          # Human-readable excerpt (tune jq once you confirm your report schema)
+          echo "### Report excerpt" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo '```json' >> "$GITHUB_STEP_SUMMARY"
+          jq -c '.' report.json 2>/dev/null | head -c 24000 >> "$GITHUB_STEP_SUMMARY" || cat report.json | head -c 24000 >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload scan report
+        if: always() && hashFiles('report.json') != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: helm-scan-report-${{ github.run_id }}
+          path: report.json
+          if-no-files-found: warn
+
+      - name: Comment on PR with summary
+        if: always() && github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        env:
+          POLICY_SETS: ${{ env.POLICY_SETS }}
+        with:
+          script: |
+            const fs = require('fs');
+            const path = 'report.json';
+            let body = '## nctl Helm policy scan\n\n';
+            body += `Policy sets: \`${process.env.POLICY_SETS}\`\n`;
+            body += `[View job summary and download **report.json** artifact](${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID})\n\n`;
+
+            try {
+              const raw = fs.readFileSync(path, 'utf8');
+              const preview = raw.length > 12000 ? raw.slice(0, 12000) + '\n\n…(truncated)' : raw;
+              body += '<details><summary>Report JSON (click to expand)</summary>\n\n';
+              body += '```json\n' + preview + '\n```\n\n</details>\n';
+            } catch (e) {
+              body += '_Could not read report.json._\n';
+            }
+
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+            });
+
+            const marker = '<!-- nctl-helm-scan-bot -->';
+            const existing = comments.find(c => c.body && c.body.includes(marker));
+
+            const payload = marker + '\n\n' + body;
+
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: existing.id,
+                body: payload,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body: payload,
+              });
+            }
+
+      # Uncomment to fail the PR when the scan fails (violations / nctl non-zero exit)
+      # - name: Enforce scan success
+      #   if: steps.scan.outcome != 'success'
+      #   run: exit 1
