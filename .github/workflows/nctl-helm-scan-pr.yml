@@ -1,5 +1,6 @@
-# Option A: Scan Helm chart on every PR; publish violations to job summary, artifacts, and PR comment.
-# When violations exist, nctl scan typically exits with code 1 — that means "findings present", not a crash.
+# Scans Helm chart on every push to main and records policy violations.
+# Users can then trigger this workflow manually (workflow_dispatch) to remediate
+# specific violating pod controllers or generate Kyverno PolicyExceptions for them.
 #
 # Required repository secrets:
 #   NIRMATA_URL   — e.g. https://www.nirmata.io
@@ -7,42 +8,57 @@
 # Optional:
 #   NIRMATA_USERID — if your nctl version requires login with userid (email)
 #
-# Repository variable (recommended):
-#   HELM_CHART_PATH — directory that contains Chart.yaml (e.g. charts/myapp). If unset, defaults to ".".
-#   Using "." scans the whole repo; any large *.zip (e.g. nctl.zip) can trigger:
-#   Error: chart file "nctl.zip" is larger than the maximum file size 5242880
+# Repository variables (recommended):
+#   HELM_CHART_PATH — directory that contains Chart.yaml (e.g. charts/myapp). Defaults to ".".
 
-name: nctl Helm policy scan (PR)
+name: nctl Helm policy scan (main branch)
 
 on:
-  pull_request:
-    branches: [exceptions-in-pipelines]
-    # Uncomment to limit to chart paths:
-    # paths:
-    #   - 'charts/**'
-    #   - '.github/workflows/nctl-helm-scan-pr.yml'
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      selected_resources:
+        description: >
+          Comma-separated pod controllers to process (e.g. "Deployment/nginx,StatefulSet/redis").
+          Copy resource names from the scan summary of a previous run.
+          Leave empty to run the scan only.
+        required: false
+        default: ''
+      action:
+        description: 'Action to perform on the selected resources'
+        required: false
+        default: 'generate-exception'
+        type: choice
+        options:
+          - generate-exception
+          - remediate
 
 concurrency:
-  group: nctl-helm-scan-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  group: nctl-helm-scan-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 permissions:
   contents: read
-  pull-requests: write
 
 env:
   NIRMATA_URL: ${{ secrets.NIRMATA_URL }}
   NIRMATA_TOKEN: ${{ secrets.NIRMATA_TOKEN }}
   POLICY_SETS: pss-baseline,pss-restricted
-  # Set in: Settings → Secrets and variables → Actions → Variables → HELM_CHART_PATH
   CHART_PATH: ${{ vars.HELM_CHART_PATH != '' && vars.HELM_CHART_PATH || '.' }}
-  # Output folder for nctl ai–generated PolicyException YAML (optional override)
-  POLICYEXCEPTION_DIR: ${{ vars.POLICYEXCEPTION_DIR != '' && vars.POLICYEXCEPTION_DIR || 'policyexceptions' }}
+  POLICYEXCEPTION_DIR: policyexceptions
+  REMEDIATION_DIR: remediated
 
 jobs:
+  # ─────────────────────────────────────────────────────────────
+  # JOB 1: Scan the Helm chart and list violating pod controllers
+  # ─────────────────────────────────────────────────────────────
   scan:
+    name: Scan Helm chart
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    outputs:
+      violations_found: ${{ steps.parse.outputs.violations_found }}
 
     steps:
       - name: Checkout
@@ -50,38 +66,31 @@ jobs:
         with:
           fetch-depth: 0
 
-      # Full CLI (includes `nctl ai`). The marketplace action pinned an older build without `ai`.
-      # See: https://downloads.nirmata.io/nctl/downloads/
       - name: Install nctl
         run: |
           set -euo pipefail
           curl -fsSL https://downloads.nirmata.io/nctl/install.sh | bash
-          NCTL_BIN="$(command -v nctl)"
-          echo "$(dirname "${NCTL_BIN}")" >> "${GITHUB_PATH}"
+          echo "$(dirname "$(command -v nctl)")" >> "${GITHUB_PATH}"
           nctl version
-          nctl ai --help >/dev/null
 
-      - name: Authenticate nctl (optional)
+      - name: Authenticate nctl
         env:
           NIRMATA_USERID: ${{ secrets.NIRMATA_USERID }}
         run: |
-          set -euo pipefail
           if [ -n "${NIRMATA_USERID:-}" ]; then
             nctl login --url "${NIRMATA_URL}" --userid "${NIRMATA_USERID}" --token "${NIRMATA_TOKEN}"
           fi
 
-      # Scanning the whole repo (-r .) makes nctl treat *.zip files as chart packages; large zips fail with a 5MB limit.
-      # Prefer HELM_CHART_PATH pointing at the folder that contains Chart.yaml.
-      - name: Prepare scan path
+      - name: Validate chart path
         run: |
           set -euo pipefail
-          echo "CHART_PATH=${CHART_PATH}"
           if [[ ! -d "${CHART_PATH}" ]]; then
             echo "::error::HELM_CHART_PATH is not a directory: ${CHART_PATH}"
             exit 1
           fi
+          # Large zip files at repo root exceed nctl's 5 MB chart package limit
           if [[ "${CHART_PATH}" == "." ]] && [[ -f nctl.zip ]]; then
-            echo "::warning::Removing nctl.zip at repository root so the scan can run (exceeds nctl's 5MB chart package limit). Prefer setting repo variable HELM_CHART_PATH to your chart directory."
+            echo "::warning::Removing nctl.zip from repo root to avoid the 5 MB scan limit."
             rm -f nctl.zip
           fi
 
@@ -90,165 +99,308 @@ jobs:
         continue-on-error: true
         run: |
           set -euo pipefail
-          set -o pipefail
           nctl scan helm -r "${CHART_PATH}" --policy-sets "${POLICY_SETS}" -o json | tee report.json
 
-      - name: Summarize report for Actions UI
-        if: always()
+      - name: Parse violations — extract pod controllers
+        id: parse
+        if: always() && hashFiles('report.json') != ''
         run: |
           set -euo pipefail
-          {
-            echo "## nctl Helm policy scan"
-            echo ""
-            echo "| Field | Value |"
-            echo "| --- | --- |"
-            echo "| Policy sets | \`${POLICY_SETS}\` |"
-            echo "| Commit | \`${{ github.sha }}\` |"
-            echo "| Workflow | [$GITHUB_RUN_ID]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID) |"
-            echo ""
-          } >> "$GITHUB_STEP_SUMMARY"
 
-          if [[ ! -f report.json ]]; then
-            echo "_report.json was not produced._" >> "$GITHUB_STEP_SUMMARY"
-            exit 0
+          # Extract unique failing pod controllers (Deployment/StatefulSet/DaemonSet/ReplicaSet/Job/CronJob).
+          # Handles both "resources" and "subjects" field names used by different nctl versions.
+          jq -r '
+            .results // [] |
+            map(select(.result == "fail")) |
+            map((.resources // .subjects // []) | .[]) |
+            map(select(
+              .kind == "Deployment"  or .kind == "StatefulSet" or
+              .kind == "DaemonSet"   or .kind == "ReplicaSet"  or
+              .kind == "Job"         or .kind == "CronJob"
+            ) | "\(.kind)/\(.name)") |
+            unique | .[]
+          ' report.json > violating_controllers.txt 2>/dev/null || true
+
+          if [[ -s violating_controllers.txt ]]; then
+            echo "violations_found=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "violations_found=false" >> "$GITHUB_OUTPUT"
           fi
 
-          echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "> **Note:** If the scan step shows exit code **1**, that usually means **policy violations were found** (expected for a failing policy result). It does not mean the scanner failed to produce \`report.json\`." >> "$GITHUB_STEP_SUMMARY"
-          echo "" >> "$GITHUB_STEP_SUMMARY"
-
-          # Human-readable excerpt (tune jq once you confirm your report schema)
-          echo "### Report excerpt" >> "$GITHUB_STEP_SUMMARY"
-          echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo '```json' >> "$GITHUB_STEP_SUMMARY"
-          jq -c '.' report.json 2>/dev/null | head -c 24000 >> "$GITHUB_STEP_SUMMARY" || cat report.json | head -c 24000 >> "$GITHUB_STEP_SUMMARY"
-          echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo '```' >> "$GITHUB_STEP_SUMMARY"
-
-      - name: Upload scan report
+      - name: Upload scan report artifact
         if: always() && hashFiles('report.json') != ''
         uses: actions/upload-artifact@v4
         with:
           name: helm-scan-report-${{ github.run_id }}
           path: report.json
+          retention-days: 7
           if-no-files-found: warn
 
-      - name: Generate PolicyException YAML with nctl ai
-        id: policy_exceptions
-        if: hashFiles('report.json') != ''
-        continue-on-error: true
-        env:
-          POLICYEXCEPTION_DIR: ${{ env.POLICYEXCEPTION_DIR }}
+      - name: Write job summary
+        if: always()
+        run: |
+          {
+            echo "## nctl Helm Policy Scan"
+            echo ""
+            echo "| Field | Value |"
+            echo "|---|---|"
+            echo "| Commit | \`${{ github.sha }}\` |"
+            echo "| Branch | \`${{ github.ref_name }}\` |"
+            echo "| Policy sets | \`${POLICY_SETS}\` |"
+            echo "| Chart path | \`${CHART_PATH}\` |"
+            echo ""
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          if [[ "${{ steps.parse.outputs.violations_found }}" == "true" ]]; then
+            {
+              echo "### ⚠️ Violating Pod Controllers"
+              echo ""
+              echo "The following pod controllers have policy violations."
+              echo "Copy resource names from the table below when triggering the workflow manually."
+              echo ""
+              echo "| # | Resource (Kind/Name) |"
+              echo "|---|---|"
+            } >> "$GITHUB_STEP_SUMMARY"
+
+            i=1
+            while IFS= read -r resource; do
+              echo "| ${i} | \`${resource}\` |" >> "$GITHUB_STEP_SUMMARY"
+              i=$((i + 1))
+            done < violating_controllers.txt
+
+            {
+              echo ""
+              echo "### ▶️ Next Steps — Remediate or Generate PolicyExceptions"
+              echo ""
+              echo "1. Go to **Actions → nctl Helm policy scan (main branch) → Run workflow**"
+              echo "2. In **selected_resources**, paste one or more resource names from the table above, comma-separated"
+              echo "   - Example: \`Deployment/nginx,StatefulSet/redis\`"
+              echo "3. Choose an **action**:"
+              echo "   - \`generate-exception\` — generate Kyverno PolicyException YAMLs"
+              echo "   - \`remediate\` — auto-fix the chart templates using nctl ai"
+              echo "4. Click **Run workflow** — output YAMLs will be available as pipeline artifacts"
+              echo ""
+              echo "> **Note:** All generated PolicyExceptions use \`namespace: kyverno\` as required by Kyverno."
+            } >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "### ✅ No pod controller violations found" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # JOB 2: Process user-selected resources (only on manual workflow_dispatch run)
+  # ─────────────────────────────────────────────────────────────────────────────
+  process:
+    name: Process selected resources
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    needs: scan
+    if: |
+      github.event_name == 'workflow_dispatch' &&
+      inputs.selected_resources != ''
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install nctl
         run: |
           set -euo pipefail
-          mkdir -p "${POLICYEXCEPTION_DIR}"
-          cat > nctl-ai-policyexceptions-prompt.txt << EOF
-          Read the Helm policy scan results in report.json in the current working directory.
+          curl -fsSL https://downloads.nirmata.io/nctl/install.sh | bash
+          echo "$(dirname "$(command -v nctl)")" >> "${GITHUB_PATH}"
+          nctl version
+          nctl ai --help >/dev/null
 
-          Based on the violations in report.json, generate Kyverno PolicyException YAML manifests for each individual Kubernetes resource that has violations (one PolicyException per resource or per logical group as appropriate).
-
-          Use a valid PolicyException apiVersion/kind (e.g. kyverno.io/v2beta1 PolicyException) appropriate for modern Kyverno.
-
-          Write all generated YAML files under the directory: ${POLICYEXCEPTION_DIR}/
-          Use clear file names (e.g. including resource kind and name).
-          EOF
-          set +e
-          nctl ai --new-session \
-            --allowed-dirs "$(pwd)" \
-            --prompt "$(cat nctl-ai-policyexceptions-prompt.txt)" \
-            --skip-permission-checks \
-            --force
-          ai_exit=$?
-          set -e
-          if [[ "${ai_exit}" -eq 0 ]]; then
-            echo "ai_success=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "ai_success=false" >> "$GITHUB_OUTPUT"
-            echo "::warning::nctl ai exited with ${ai_exit}; see log above."
+      - name: Authenticate nctl
+        env:
+          NIRMATA_USERID: ${{ secrets.NIRMATA_USERID }}
+        run: |
+          if [ -n "${NIRMATA_USERID:-}" ]; then
+            nctl login --url "${NIRMATA_URL}" --userid "${NIRMATA_USERID}" --token "${NIRMATA_TOKEN}"
           fi
-          exit 0
 
-      - name: Upload PolicyException YAML artifact
-        if: always() && steps.policy_exceptions.outputs.ai_success == 'true'
+      - name: Download scan report
+        uses: actions/download-artifact@v4
+        with:
+          name: helm-scan-report-${{ github.run_id }}
+          path: .
+
+      - name: Process each selected resource
+        id: process
+        env:
+          SELECTED: ${{ inputs.selected_resources }}
+          ACTION: ${{ inputs.action }}
+        run: |
+          set -euo pipefail
+          mkdir -p "${POLICYEXCEPTION_DIR}" "${REMEDIATION_DIR}"
+
+          IFS=',' read -ra RESOURCES <<< "${SELECTED}"
+
+          for resource in "${RESOURCES[@]}"; do
+            resource="$(echo "${resource}" | xargs)"   # trim whitespace
+            KIND="${resource%%/*}"
+            NAME="${resource##*/}"
+
+            echo "::group::${KIND}/${NAME} — ${ACTION}"
+
+            # Extract all failing violations for this specific resource
+            VIOLATIONS="$(jq -r \
+              --arg k "${KIND}" --arg n "${NAME}" '
+              .results // [] |
+              map(select(
+                .result == "fail" and
+                (((.resources // .subjects // []) |
+                  map(select(.kind == $k and .name == $n)) | length) > 0)
+              )) |
+              map("Policy: \(.policy // "unknown") | Rule: \(.rule // "unknown") | \(.message // "")") |
+              .[]
+            ' report.json 2>/dev/null || echo "Could not extract violations from report.json")"
+
+            echo "Violations:"
+            echo "${VIOLATIONS}"
+
+            PROMPT_FILE="$(mktemp)"
+
+            if [[ "${ACTION}" == "generate-exception" ]]; then
+              OUT_FILE="${POLICYEXCEPTION_DIR}/${KIND,,}-${NAME}-exception.yaml"
+              cat > "${PROMPT_FILE}" << EOF
+          You are generating a Kyverno PolicyException YAML for a Helm chart resource.
+
+          Resource: ${KIND} named "${NAME}"
+
+          Policy violations to exempt:
+          ${VIOLATIONS}
+
+          STRICT requirements — do not deviate:
+          - apiVersion: kyverno.io/v2beta1
+          - kind: PolicyException
+          - metadata.name: ${KIND,,}-${NAME}-exception
+          - metadata.namespace: kyverno   # REQUIRED — Kyverno only reads PolicyExceptions from the kyverno namespace
+          - spec.match must target exactly ${KIND} resources named "${NAME}"
+          - spec.exceptions must list every failing policy/rule pair from the violations above
+          - Output a single valid YAML document only
+
+          Write the output to: ${OUT_FILE}
+          EOF
+
+            elif [[ "${ACTION}" == "remediate" ]]; then
+              cat > "${PROMPT_FILE}" << EOF
+          You are remediating Kyverno policy violations in a Helm chart.
+
+          Resource: ${KIND} named "${NAME}"
+
+          Policy violations to fix:
+          ${VIOLATIONS}
+
+          The Helm chart is located at: ${CHART_PATH}
+
+          Steps:
+          1. Locate the Helm template file(s) in ${CHART_PATH} that define the ${KIND} named "${NAME}"
+          2. Fix ALL violations listed above with the minimum changes needed
+          3. Write the fixed file(s) to: ${REMEDIATION_DIR}/
+          4. Preserve all existing Helm templating syntax and functionality
+          EOF
+            fi
+
+            nctl ai --new-session \
+              --allowed-dirs "$(pwd)" \
+              --prompt "$(cat "${PROMPT_FILE}")" \
+              --skip-permission-checks \
+              --force \
+              || echo "::warning::nctl ai did not complete successfully for ${KIND}/${NAME}"
+
+            rm -f "${PROMPT_FILE}"
+            echo "::endgroup::"
+          done
+
+      - name: Enforce kyverno namespace in all generated PolicyException YAMLs
+        if: inputs.action == 'generate-exception'
+        run: |
+          # Post-process every YAML to guarantee namespace: kyverno regardless of what nctl ai wrote.
+          find "${POLICYEXCEPTION_DIR}" \( -name "*.yaml" -o -name "*.yml" \) | while IFS= read -r f; do
+            python3 - "${f}" << 'PYEOF'
+          import sys, yaml
+
+          path = sys.argv[1]
+          with open(path, "r") as fh:
+              docs = list(yaml.safe_load_all(fh))
+
+          changed = False
+          for doc in docs:
+              if isinstance(doc, dict) and doc.get("kind") == "PolicyException":
+                  doc.setdefault("metadata", {})
+                  if doc["metadata"].get("namespace") != "kyverno":
+                      doc["metadata"]["namespace"] = "kyverno"
+                      changed = True
+
+          if changed:
+              with open(path, "w") as fh:
+                  yaml.dump_all(docs, fh, default_flow_style=False, allow_unicode=True)
+              print(f"Enforced namespace: kyverno in {path}")
+          PYEOF
+          done
+
+      - name: Upload PolicyException artifacts
+        if: inputs.action == 'generate-exception'
         uses: actions/upload-artifact@v4
         with:
           name: policyexceptions-${{ github.run_id }}
           path: ${{ env.POLICYEXCEPTION_DIR }}
           if-no-files-found: warn
 
-      - name: PolicyException summary
+      - name: Upload remediation artifacts
+        if: inputs.action == 'remediate'
+        uses: actions/upload-artifact@v4
+        with:
+          name: remediated-yamls-${{ github.run_id }}
+          path: ${{ env.REMEDIATION_DIR }}
+          if-no-files-found: warn
+
+      - name: Write process summary
         if: always()
+        env:
+          SELECTED: ${{ inputs.selected_resources }}
+          ACTION: ${{ inputs.action }}
         run: |
           {
+            echo "## Resource Processing Summary"
             echo ""
-            echo "### PolicyException generation (nctl ai)"
+            echo "| Field | Value |"
+            echo "|---|---|"
+            echo "| Resources | \`${SELECTED}\` |"
+            echo "| Action | \`${ACTION}\` |"
             echo ""
           } >> "$GITHUB_STEP_SUMMARY"
-          if [[ "${{ steps.policy_exceptions.outputs.ai_success }}" == "true" ]]; then
-            echo "Generated YAML uploaded as artifact **policyexceptions-${{ github.run_id }}**." >> "$GITHUB_STEP_SUMMARY"
-          elif [[ "${{ steps.policy_exceptions.outcome }}" == "skipped" ]]; then
-            echo "_Skipped (no report.json)._ " >> "$GITHUB_STEP_SUMMARY"
-          else
-            echo "_Generation did not succeed — see the **Generate PolicyException YAML with nctl ai** step log._" >> "$GITHUB_STEP_SUMMARY"
+
+          if [[ "${ACTION}" == "generate-exception" ]]; then
+            COUNT=$(find "${POLICYEXCEPTION_DIR}" \( -name "*.yaml" -o -name "*.yml" \) 2>/dev/null | wc -l | xargs)
+            if [[ "${COUNT}" -gt 0 ]]; then
+              {
+                echo "### ✅ PolicyException YAMLs generated (${COUNT} file(s))"
+                echo ""
+                echo "Download artifact: **policyexceptions-${{ github.run_id }}**"
+                echo ""
+                echo "All PolicyExceptions use \`namespace: kyverno\` as required by Kyverno."
+                echo ""
+                echo "Apply with:"
+                echo "\`\`\`"
+                echo "kubectl apply -f <extracted-artifact-dir>/"
+                echo "\`\`\`"
+              } >> "$GITHUB_STEP_SUMMARY"
+            else
+              echo "### ⚠️ No PolicyException YAMLs were generated — check the step logs." >> "$GITHUB_STEP_SUMMARY"
+            fi
+
+          elif [[ "${ACTION}" == "remediate" ]]; then
+            COUNT=$(find "${REMEDIATION_DIR}" -type f 2>/dev/null | wc -l | xargs)
+            if [[ "${COUNT}" -gt 0 ]]; then
+              {
+                echo "### ✅ Remediated templates generated (${COUNT} file(s))"
+                echo ""
+                echo "Download artifact: **remediated-yamls-${{ github.run_id }}**"
+                echo ""
+                echo "Review the changes and apply them back to your Helm chart."
+              } >> "$GITHUB_STEP_SUMMARY"
+            else
+              echo "### ⚠️ No remediated files were generated — check the step logs." >> "$GITHUB_STEP_SUMMARY"
+            fi
           fi
-
-      - name: Comment on PR with summary
-        if: always() && github.event_name == 'pull_request'
-        uses: actions/github-script@v7
-        env:
-          POLICY_SETS: ${{ env.POLICY_SETS }}
-          AI_SUCCESS: ${{ steps.policy_exceptions.outputs.ai_success }}
-        with:
-          script: |
-            const fs = require('fs');
-            const path = 'report.json';
-            let body = '## nctl Helm policy scan\n\n';
-            body += `Policy sets: \`${process.env.POLICY_SETS}\`\n`;
-            body += `[Workflow run (summary + artifacts)](${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID})\n\n`;
-            body += '_If the scan step exits with **1**, that usually means **violations were found** (not a broken scan), as long as `report.json` was produced._\n\n';
-            if (process.env.AI_SUCCESS === 'true') {
-              body += `**PolicyException YAML:** download artifact **policyexceptions-${process.env.GITHUB_RUN_ID}** from this run.\n\n`;
-            } else if (process.env.AI_SUCCESS === 'false') {
-              body += '_PolicyException generation (nctl ai) did not complete successfully — see the workflow log._\n\n';
-            }
-
-            try {
-              const raw = fs.readFileSync(path, 'utf8');
-              const preview = raw.length > 12000 ? raw.slice(0, 12000) + '\n\n…(truncated)' : raw;
-              body += '<details><summary>Report JSON (click to expand)</summary>\n\n';
-              body += '```json\n' + preview + '\n```\n\n</details>\n';
-            } catch (e) {
-              body += '_Could not read report.json._\n';
-            }
-
-            const { data: comments } = await github.rest.issues.listComments({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: context.issue.number,
-            });
-
-            const marker = '<!-- nctl-helm-scan-bot -->';
-            const existing = comments.find(c => c.body && c.body.includes(marker));
-
-            const payload = marker + '\n\n' + body;
-
-            if (existing) {
-              await github.rest.issues.updateComment({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                comment_id: existing.id,
-                body: payload,
-              });
-            } else {
-              await github.rest.issues.createComment({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                issue_number: context.issue.number,
-                body: payload,
-              });
-            }
-
-      # Uncomment to fail the PR when the scan fails (violations / nctl non-zero exit)
-      # - name: Enforce scan success
-      #   if: steps.scan.outcome != 'success'
-      #   run: exit 1
