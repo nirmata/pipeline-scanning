@@ -15,7 +15,7 @@ name: nctl Helm policy scan (main branch)
 
 on:
   push:
-    branches: [main]
+    branches: [exceptions-in-pipelines]
   workflow_dispatch:
     inputs:
       selected_resources:
