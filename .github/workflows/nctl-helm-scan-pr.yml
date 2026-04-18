@@ -208,8 +208,33 @@ jobs:
               i=$((i+1))
             done < violating_controllers.txt
 
-            # Build comma-separated list of all violating resources for pre-filled CLI commands
-            ALL_RESOURCES=$(paste -sd',' violating_controllers.txt)
+            # Per-resource violations breakdown — policy names are copyable for the selected_policies input
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            echo "#### Policy violations per resource" >> "$GITHUB_STEP_SUMMARY"
+            while IFS= read -r resource; do
+              KIND="${resource%%/*}"
+              NAME="${resource##*/}"
+              {
+                echo ""
+                echo "**\`${resource}\`**"
+                echo ""
+                echo "| Policy | Rule | Severity |"
+                echo "|---|---|---|"
+              } >> "$GITHUB_STEP_SUMMARY"
+              jq -r --arg k "${KIND}" --arg n "${NAME}" '
+                .policies // [] |
+                map(. as $pol |
+                  (.namespaceScopedResources // []) |
+                  map(.resources // [] | .[]) | flatten |
+                  map(select(.name == ($n + " (" + $k + ")"))) |
+                  map(
+                    .rules // [] |
+                    map(select(.Status == "fail")) |
+                    map("| \($pol.name) | \(.Name) | \(.Severity) |")
+                  ) | flatten
+                ) | flatten | .[]
+              ' report.json >> "$GITHUB_STEP_SUMMARY" 2>/dev/null || true
+            done < violating_controllers.txt
 
             {
               echo ""
@@ -223,11 +248,13 @@ jobs:
               echo ""
               echo "   | Field | What to enter |"
               echo "   |---|---|"
-              echo "   | **selected_resources** | paste name(s) from the table above, comma-separated |"
+              echo "   | **selected_resources** | resource name(s) from the table above, comma-separated |"
               echo "   | **action** | \`generate-exception\` or \`remediate\` |"
+              echo "   | **selected_policies** | *(optional)* policy name(s) from the violations table above — leave blank for all |"
               echo ""
               echo "   - \`generate-exception\` → Kyverno PolicyException YAML (\`namespace: kyverno\`)"
               echo "   - \`remediate\`           → fixed K8s resource YAML with all violations resolved"
+              echo "   - **selected_policies** lets you generate a PolicyException for only specific violations"
               echo ""
               echo "5. Click **Run workflow** — download the output ZIP from the run's **Artifacts** section"
             } >> "$GITHUB_STEP_SUMMARY"
