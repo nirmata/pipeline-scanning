@@ -28,6 +28,14 @@ on:
         options:
           - generate-exception
           - remediate
+      selected_policies:
+        description: >
+          (generate-exception only) Comma-separated policy names to include in the PolicyException.
+          Leave empty to cover ALL violations for the selected resource(s).
+          Copy policy names from the "Policy violations per resource" table in the scan summary.
+          Example: disallow-capabilities-strict,require-run-as-nonroot
+        required: false
+        default: ''
 
 permissions:
   contents: read
@@ -123,6 +131,7 @@ jobs:
         env:
           SELECTED: ${{ inputs.selected_resources }}
           ACTION: ${{ inputs.action }}
+          SELECTED_POLICIES: ${{ inputs.selected_policies }}
         run: |
           set -euo pipefail
           mkdir -p "${POLICYEXCEPTION_DIR}" "${REMEDIATION_DIR}"
@@ -136,9 +145,16 @@ jobs:
 
             echo "::group::▶ ${ACTION}  →  ${KIND}/${NAME}"
 
-            # ── Extract violations for this resource ──────────────────────
-            VIOLATIONS="$(jq -r --arg k "${KIND}" --arg n "${NAME}" '
+            # ── Extract violations, optionally filtered to selected policies ──
+            VIOLATIONS="$(jq -r --arg k "${KIND}" --arg n "${NAME}" --arg pf "${SELECTED_POLICIES}" '
               .policies // [] |
+              # Filter by selected_policies when provided (comma-separated list)
+              if ($pf != "") then
+                map(select(
+                  .name as $pname |
+                  ($pf | split(",") | map(ltrimstr(" ") | rtrimstr(" ")) | index($pname)) != null
+                ))
+              else . end |
               map(. as $pol |
                 (.namespaceScopedResources // []) |
                 map(.resources // [] | .[]) | flatten |
@@ -153,7 +169,11 @@ jobs:
             ' report.json 2>/dev/null)"
 
             if [[ -z "${VIOLATIONS}" ]]; then
-              echo "::warning::No violations found in report for ${KIND}/${NAME} — skipping"
+              if [[ -n "${SELECTED_POLICIES}" ]]; then
+                echo "::warning::No violations matched the selected policies (${SELECTED_POLICIES}) for ${KIND}/${NAME} — skipping"
+              else
+                echo "::warning::No violations found in report for ${KIND}/${NAME} — skipping"
+              fi
               echo "::endgroup::"
               continue
             fi
@@ -311,15 +331,21 @@ jobs:
         env:
           SELECTED: ${{ inputs.selected_resources }}
           ACTION: ${{ inputs.action }}
+          SELECTED_POLICIES: ${{ inputs.selected_policies }}
         run: |
           {
             echo "## Processing Results"
             echo ""
             echo "| | |"
             echo "|---|---|"
-            echo "| Resources | \`${SELECTED}\` |"
-            echo "| Action    | \`${ACTION}\` |"
-            echo "| Chart branch | \`${CHART_BRANCH}\` |"
+            echo "| Resources        | \`${SELECTED}\` |"
+            echo "| Action           | \`${ACTION}\` |"
+            if [[ -n "${SELECTED_POLICIES}" ]]; then
+              echo "| Policies scoped  | \`${SELECTED_POLICIES}\` |"
+            else
+              echo "| Policies scoped  | all violations |"
+            fi
+            echo "| Chart branch     | \`${CHART_BRANCH}\` |"
             echo ""
           } >> "$GITHUB_STEP_SUMMARY"
 
