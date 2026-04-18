@@ -108,6 +108,7 @@ jobs:
           set -euo pipefail
           # nctl report format: policies[].namespaceScopedResources[].resources[]
           # Resource name embeds kind as suffix: "release-name-my-nginx-chart (Deployment)"
+          # Uses split(" (") to extract kind — avoids jq named-capture regex failures
           jq -r '
             .policies // [] |
             map(
@@ -116,14 +117,18 @@ jobs:
               map(select(
                 .rules // [] | map(select(.Status == "fail")) | length > 0
               )) |
-              map(.name |
-                capture("^(?P<rname>.+) \\((?P<kind>[^)]+)\\)$") |
-                select(
-                  .kind == "Deployment"  or .kind == "StatefulSet" or
-                  .kind == "DaemonSet"   or .kind == "ReplicaSet"  or
-                  .kind == "Job"         or .kind == "CronJob"
-                ) |
-                "\(.kind)/\(.rname)"
+              map(
+                (.name | split(" (")) as $parts |
+                if ($parts | length) > 1 then
+                  ($parts[-1] | rtrimstr(")")) as $kind |
+                  ($parts[0:-1] | join(" (")) as $rname |
+                  select(
+                    $kind == "Deployment"  or $kind == "StatefulSet" or
+                    $kind == "DaemonSet"   or $kind == "ReplicaSet"  or
+                    $kind == "Job"         or $kind == "CronJob"
+                  ) |
+                  "\($kind)/\($rname)"
+                else empty end
               )
             ) |
             flatten | unique | .[]
