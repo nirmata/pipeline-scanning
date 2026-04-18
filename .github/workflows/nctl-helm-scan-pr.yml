@@ -1,17 +1,16 @@
-# Scans Helm chart on every push to main and records policy violations.
-# Users can then trigger this workflow manually (workflow_dispatch) to remediate
-# specific violating pod controllers or generate Kyverno PolicyExceptions for them.
+# Triggered on every push to exceptions-in-pipelines.
+# Scans the Helm chart, records violating pod controllers, and renders per-resource YAMLs.
 #
-# Required repository secrets:
-#   NIRMATA_URL   — e.g. https://www.nirmata.io
-#   NIRMATA_TOKEN — API token
-# Optional:
-#   NIRMATA_USERID — if your nctl version requires login with userid (email)
+# After a scan run completes:
+#   1. Review the violations table in the job summary.
+#   2. Go to Actions → "nctl Helm policy scan" → Run workflow.
+#   3. Paste resource names, pick an action, and run — artifacts contain the results.
 #
-# Repository variables (recommended):
-#   HELM_CHART_PATH — directory that contains Chart.yaml (e.g. charts/myapp). Defaults to ".".
+# Required secrets : NIRMATA_URL, NIRMATA_TOKEN
+# Optional secret  : NIRMATA_USERID
+# Optional variable: HELM_CHART_PATH (defaults to ".")
 
-name: nctl Helm policy scan (main branch)
+name: nctl Helm policy scan
 
 on:
   push:
@@ -19,14 +18,17 @@ on:
   workflow_dispatch:
     inputs:
       selected_resources:
-        description: >
-          Comma-separated pod controllers to process (e.g. "Deployment/nginx,StatefulSet/redis").
-          Copy resource names from the scan summary of a previous run.
+        description: |
+          Comma-separated pod controllers to process — copy names from the scan summary.
+          Format: Kind/name   e.g.  Deployment/nginx,StatefulSet/redis
           Leave empty to run the scan only.
         required: false
         default: ''
       action:
-        description: 'Action to perform on the selected resources'
+        description: |
+          Action to perform on every selected resource:
+            generate-exception → Kyverno PolicyException YAML  (namespace: kyverno)
+            remediate          → fixed K8s resource YAML with all violations resolved
         required: false
         default: 'generate-exception'
         type: choice
@@ -49,10 +51,10 @@ env:
   POLICYEXCEPTION_DIR: policyexceptions
   REMEDIATION_DIR: remediated
 
+# ═══════════════════════════════════════════════════════════════════════════════
+# JOB 1 — Scan + render (always runs)
+# ═══════════════════════════════════════════════════════════════════════════════
 jobs:
-  # ─────────────────────────────────────────────────────────────
-  # JOB 1: Scan the Helm chart and list violating pod controllers
-  # ─────────────────────────────────────────────────────────────
   scan:
     name: Scan Helm chart
     runs-on: ubuntu-latest
@@ -61,10 +63,14 @@ jobs:
       violations_found: ${{ steps.parse.outputs.violations_found }}
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+
+      - name: Install Helm
+        run: |
+          curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+          helm version
 
       - name: Install nctl
         run: |
@@ -77,22 +83,16 @@ jobs:
         env:
           NIRMATA_USERID: ${{ secrets.NIRMATA_USERID }}
         run: |
-          if [ -n "${NIRMATA_USERID:-}" ]; then
-            nctl login --url "${NIRMATA_URL}" --userid "${NIRMATA_USERID}" --token "${NIRMATA_TOKEN}"
-          fi
+          [ -n "${NIRMATA_USERID:-}" ] &&
+            nctl login --url "${NIRMATA_URL}" --userid "${NIRMATA_USERID}" --token "${NIRMATA_TOKEN}" ||
+            true
 
       - name: Validate chart path
         run: |
           set -euo pipefail
-          if [[ ! -d "${CHART_PATH}" ]]; then
-            echo "::error::HELM_CHART_PATH is not a directory: ${CHART_PATH}"
-            exit 1
-          fi
-          # Large zip files at repo root exceed nctl's 5 MB chart package limit
-          if [[ "${CHART_PATH}" == "." ]] && [[ -f nctl.zip ]]; then
-            echo "::warning::Removing nctl.zip from repo root to avoid the 5 MB scan limit."
-            rm -f nctl.zip
-          fi
+          [[ -d "${CHART_PATH}" ]] || { echo "::error::HELM_CHART_PATH '${CHART_PATH}' is not a directory"; exit 1; }
+          # Large zip at repo root exceeds nctl's 5 MB package limit
+          [[ "${CHART_PATH}" == "." && -f nctl.zip ]] && rm -f nctl.zip || true
 
       - name: Scan Helm chart
         id: scan
@@ -106,9 +106,7 @@ jobs:
         if: always() && hashFiles('report.json') != ''
         run: |
           set -euo pipefail
-
-          # Extract unique failing pod controllers (Deployment/StatefulSet/DaemonSet/ReplicaSet/Job/CronJob).
-          # Handles both "resources" and "subjects" field names used by different nctl versions.
+          # Handles both "resources" and "subjects" field names across nctl versions
           jq -r '
             .results // [] |
             map(select(.result == "fail")) |
@@ -117,22 +115,52 @@ jobs:
               .kind == "Deployment"  or .kind == "StatefulSet" or
               .kind == "DaemonSet"   or .kind == "ReplicaSet"  or
               .kind == "Job"         or .kind == "CronJob"
-            ) | "\(.kind)/\(.name)") |
-            unique | .[]
+            ) | "\(.kind)/\(.name)") | unique | .[]
           ' report.json > violating_controllers.txt 2>/dev/null || true
 
-          if [[ -s violating_controllers.txt ]]; then
-            echo "violations_found=true" >> "$GITHUB_OUTPUT"
-          else
+          [[ -s violating_controllers.txt ]] &&
+            echo "violations_found=true" >> "$GITHUB_OUTPUT" ||
             echo "violations_found=false" >> "$GITHUB_OUTPUT"
+
+      - name: Render Helm chart — split into per-resource YAML files
+        if: always() && hashFiles('report.json') != ''
+        run: |
+          set -euo pipefail
+          mkdir -p rendered-resources
+
+          helm dependency build "${CHART_PATH}" 2>/dev/null || true
+          helm template scan-release "${CHART_PATH}" > all-rendered.yaml 2>/dev/null || true
+
+          if [[ -s all-rendered.yaml ]]; then
+            python3 << 'PYEOF'
+          import yaml, os, re
+          os.makedirs("rendered-resources", exist_ok=True)
+          with open("all-rendered.yaml") as f:
+              docs = list(yaml.safe_load_all(f))
+          for doc in docs:
+              if not isinstance(doc, dict):
+                  continue
+              kind = doc.get("kind", "unknown")
+              name = doc.get("metadata", {}).get("name", "unknown")
+              safe = re.sub(r"[^a-zA-Z0-9_-]", "-", name)
+              out  = f"rendered-resources/{kind.lower()}-{safe}.yaml"
+              with open(out, "w") as f:
+                  yaml.dump(doc, f, default_flow_style=False, allow_unicode=True)
+          PYEOF
+            echo "Rendered resource files:"
+            ls rendered-resources/
+          else
+            echo "::warning::helm template produced no output — nctl ai will work from chart files directly"
           fi
 
-      - name: Upload scan report artifact
+      - name: Upload scan artifacts
         if: always() && hashFiles('report.json') != ''
         uses: actions/upload-artifact@v4
         with:
-          name: helm-scan-report-${{ github.run_id }}
-          path: report.json
+          name: scan-artifacts-${{ github.run_id }}
+          path: |
+            report.json
+            rendered-resources/
           retention-days: 7
           if-no-files-found: warn
 
@@ -142,7 +170,7 @@ jobs:
           {
             echo "## nctl Helm Policy Scan"
             echo ""
-            echo "| Field | Value |"
+            echo "| | |"
             echo "|---|---|"
             echo "| Commit | \`${{ github.sha }}\` |"
             echo "| Branch | \`${{ github.ref_name }}\` |"
@@ -155,54 +183,48 @@ jobs:
             {
               echo "### ⚠️ Violating Pod Controllers"
               echo ""
-              echo "The following pod controllers have policy violations."
-              echo "Copy resource names from the table below when triggering the workflow manually."
-              echo ""
-              echo "| # | Resource (Kind/Name) |"
+              echo "| # | Resource — copy this name exactly |"
               echo "|---|---|"
             } >> "$GITHUB_STEP_SUMMARY"
-
             i=1
-            while IFS= read -r resource; do
-              echo "| ${i} | \`${resource}\` |" >> "$GITHUB_STEP_SUMMARY"
-              i=$((i + 1))
+            while IFS= read -r r; do
+              echo "| ${i} | \`${r}\` |" >> "$GITHUB_STEP_SUMMARY"
+              i=$((i+1))
             done < violating_controllers.txt
 
             {
               echo ""
-              echo "### ▶️ Next Steps — Remediate or Generate PolicyExceptions"
+              echo "---"
+              echo "### ▶️ How to remediate or generate PolicyExceptions"
               echo ""
-              echo "1. Go to **Actions → nctl Helm policy scan (main branch) → Run workflow**"
-              echo "2. In **selected_resources**, paste one or more resource names from the table above, comma-separated"
-              echo "   - Example: \`Deployment/nginx,StatefulSet/redis\`"
-              echo "3. Choose an **action**:"
-              echo "   - \`generate-exception\` — generate Kyverno PolicyException YAMLs"
-              echo "   - \`remediate\` — auto-fix the chart templates using nctl ai"
-              echo "4. Click **Run workflow** — output YAMLs will be available as pipeline artifacts"
-              echo ""
-              echo "> **Note:** All generated PolicyExceptions use \`namespace: kyverno\` as required by Kyverno."
+              echo "1. [**→ Run workflow now**](https://github.com/${{ github.repository }}/actions/workflows/nctl-helm-scan-pr.yml)"
+              echo "2. Click **Run workflow** (top-right of the table)"
+              echo "3. Fill in **selected_resources** — paste one or more names from the table above, comma-separated"
+              echo "4. Choose **action**:"
+              echo "   - \`generate-exception\` — creates a Kyverno PolicyException YAML \`(namespace: kyverno)\`"
+              echo "   - \`remediate\` — creates a fixed K8s resource YAML with all violations resolved"
+              echo "5. Click **Run workflow** — download the output from the run's **Artifacts** section"
             } >> "$GITHUB_STEP_SUMMARY"
           else
             echo "### ✅ No pod controller violations found" >> "$GITHUB_STEP_SUMMARY"
           fi
 
-  # ─────────────────────────────────────────────────────────────────────────────
-  # JOB 2: Process user-selected resources (only on manual workflow_dispatch run)
-  # ─────────────────────────────────────────────────────────────────────────────
+# ═══════════════════════════════════════════════════════════════════════════════
+# JOB 2 — Process user-selected resources  (workflow_dispatch only)
+# ═══════════════════════════════════════════════════════════════════════════════
   process:
-    name: Process selected resources
+    name: "${{ inputs.action }} — ${{ inputs.selected_resources }}"
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 60
     needs: scan
     if: |
       github.event_name == 'workflow_dispatch' &&
       inputs.selected_resources != ''
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Install nctl
+      - name: Install nctl (with ai)
         run: |
           set -euo pipefail
           curl -fsSL https://downloads.nirmata.io/nctl/install.sh | bash
@@ -214,18 +236,22 @@ jobs:
         env:
           NIRMATA_USERID: ${{ secrets.NIRMATA_USERID }}
         run: |
-          if [ -n "${NIRMATA_USERID:-}" ]; then
-            nctl login --url "${NIRMATA_URL}" --userid "${NIRMATA_USERID}" --token "${NIRMATA_TOKEN}"
-          fi
+          [ -n "${NIRMATA_USERID:-}" ] &&
+            nctl login --url "${NIRMATA_URL}" --userid "${NIRMATA_USERID}" --token "${NIRMATA_TOKEN}" ||
+            true
 
-      - name: Download scan report
+      - name: Download scan artifacts
         uses: actions/download-artifact@v4
         with:
-          name: helm-scan-report-${{ github.run_id }}
-          path: .
+          name: scan-artifacts-${{ github.run_id }}
+          path: scan-artifacts
+
+      - name: Prepare workspace
+        run: |
+          cp scan-artifacts/report.json report.json
+          cp -r scan-artifacts/rendered-resources rendered-resources 2>/dev/null || mkdir -p rendered-resources
 
       - name: Process each selected resource
-        id: process
         env:
           SELECTED: ${{ inputs.selected_resources }}
           ACTION: ${{ inputs.action }}
@@ -236,68 +262,128 @@ jobs:
           IFS=',' read -ra RESOURCES <<< "${SELECTED}"
 
           for resource in "${RESOURCES[@]}"; do
-            resource="$(echo "${resource}" | xargs)"   # trim whitespace
+            resource="$(echo "${resource}" | xargs)"
             KIND="${resource%%/*}"
             NAME="${resource##*/}"
 
-            echo "::group::${KIND}/${NAME} — ${ACTION}"
+            echo "::group::▶ ${ACTION}  →  ${KIND}/${NAME}"
 
-            # Extract all failing violations for this specific resource
-            VIOLATIONS="$(jq -r \
-              --arg k "${KIND}" --arg n "${NAME}" '
+            # ── Extract violations for this resource ──────────────────────
+            VIOLATIONS="$(jq -r --arg k "${KIND}" --arg n "${NAME}" '
               .results // [] |
               map(select(
                 .result == "fail" and
                 (((.resources // .subjects // []) |
                   map(select(.kind == $k and .name == $n)) | length) > 0)
               )) |
-              map("Policy: \(.policy // "unknown") | Rule: \(.rule // "unknown") | \(.message // "")") |
+              map("  policy: \(.policy // "unknown")\n  rule:   \(.rule // "unknown")\n  reason: \(.message // "")\n") |
               .[]
-            ' report.json 2>/dev/null || echo "Could not extract violations from report.json")"
+            ' report.json 2>/dev/null)"
+
+            if [[ -z "${VIOLATIONS}" ]]; then
+              echo "::warning::No violations found in report.json for ${KIND}/${NAME} — skipping"
+              echo "::endgroup::"
+              continue
+            fi
 
             echo "Violations:"
             echo "${VIOLATIONS}"
 
+            # ── Locate rendered resource YAML ─────────────────────────────
+            RESOURCE_YAML_FILE="rendered-resources/${KIND,,}-${NAME}.yaml"
+            if [[ ! -f "${RESOURCE_YAML_FILE}" ]]; then
+              # Helm may have prefixed the name with the release name
+              RESOURCE_YAML_FILE="$(find rendered-resources/ -iname "*${NAME}*.yaml" 2>/dev/null | head -1 || true)"
+            fi
+
+            if [[ -n "${RESOURCE_YAML_FILE}" && -f "${RESOURCE_YAML_FILE}" ]]; then
+              RESOURCE_YAML="$(cat "${RESOURCE_YAML_FILE}")"
+            else
+              echo "::warning::Rendered YAML not found for ${KIND}/${NAME} — nctl ai will locate it in the chart"
+              RESOURCE_YAML="(not available — locate the ${KIND} named ${NAME} inside ${CHART_PATH})"
+            fi
+
+            # ── Build nctl ai prompt ──────────────────────────────────────
             PROMPT_FILE="$(mktemp)"
 
             if [[ "${ACTION}" == "generate-exception" ]]; then
+
               OUT_FILE="${POLICYEXCEPTION_DIR}/${KIND,,}-${NAME}-exception.yaml"
               cat > "${PROMPT_FILE}" << EOF
-          You are generating a Kyverno PolicyException YAML for a Helm chart resource.
+          Task: Generate a Kyverno PolicyException YAML for the resource below.
 
-          Resource: ${KIND} named "${NAME}"
+          ## Resource
+          Kind : ${KIND}
+          Name : ${NAME}
 
-          Policy violations to exempt:
+          ## Rendered Kubernetes YAML
+          \`\`\`yaml
+          ${RESOURCE_YAML}
+          \`\`\`
+
+          ## Policy violations to exempt
           ${VIOLATIONS}
 
-          STRICT requirements — do not deviate:
-          - apiVersion: kyverno.io/v2beta1
-          - kind: PolicyException
-          - metadata.name: ${KIND,,}-${NAME}-exception
-          - metadata.namespace: kyverno   # REQUIRED — Kyverno only reads PolicyExceptions from the kyverno namespace
-          - spec.match must target exactly ${KIND} resources named "${NAME}"
-          - spec.exceptions must list every failing policy/rule pair from the violations above
-          - Output a single valid YAML document only
+          ## Output spec — copy this structure exactly, fill in the values
+          \`\`\`yaml
+          apiVersion: kyverno.io/v2beta1
+          kind: PolicyException
+          metadata:
+            name: ${KIND,,}-${NAME}-exception
+            namespace: kyverno          # REQUIRED — do not change; Kyverno only processes exceptions from the kyverno namespace
+          spec:
+            match:
+              any:
+              - resources:
+                  kinds:
+                  - ${KIND}
+                  names:
+                  - "${NAME}"
+            exceptions:
+            - policyName: <policy-name>   # repeat one block per unique policy above
+              ruleNames:
+              - <rule-name>               # list every failing rule for that policy
+          \`\`\`
 
-          Write the output to: ${OUT_FILE}
+          Rules:
+          - Output a single complete YAML document — no prose, no markdown fences, no extra keys.
+          - Every policy/rule pair from the violations list MUST appear in spec.exceptions.
+          - metadata.namespace MUST be "kyverno" — never override this.
+
+          Write the file to: ${OUT_FILE}
           EOF
 
             elif [[ "${ACTION}" == "remediate" ]]; then
+
+              OUT_FILE="${REMEDIATION_DIR}/${KIND,,}-${NAME}.yaml"
               cat > "${PROMPT_FILE}" << EOF
-          You are remediating Kyverno policy violations in a Helm chart.
+          Task: Fix all Kyverno policy violations in the Kubernetes resource below and output the corrected YAML.
 
-          Resource: ${KIND} named "${NAME}"
+          ## Resource
+          Kind : ${KIND}
+          Name : ${NAME}
 
-          Policy violations to fix:
+          ## Current Kubernetes YAML
+          \`\`\`yaml
+          ${RESOURCE_YAML}
+          \`\`\`
+
+          ## Violations to fix
           ${VIOLATIONS}
 
-          The Helm chart is located at: ${CHART_PATH}
+          ## Instructions
+          1. For each violation, identify the exact field that is non-compliant.
+          2. Change ONLY those fields — do not alter any other configuration.
+          3. Common fixes by rule:
+             - disallow-privilege-escalation   → set securityContext.allowPrivilegeEscalation: false on every container
+             - require-run-as-nonroot          → set securityContext.runAsNonRoot: true on pod and/or containers
+             - disallow-privileged-containers  → set securityContext.privileged: false on every container
+             - drop-all-capabilities           → set securityContext.capabilities.drop: [ALL] on every container
+             - disallow-host-namespaces        → remove / set false: hostPID, hostIPC, hostNetwork
+             - restrict-volume-types           → remove disallowed volume types from spec.volumes
+          4. Output a single complete valid Kubernetes YAML document — no explanation, no markdown fences.
 
-          Steps:
-          1. Locate the Helm template file(s) in ${CHART_PATH} that define the ${KIND} named "${NAME}"
-          2. Fix ALL violations listed above with the minimum changes needed
-          3. Write the fixed file(s) to: ${REMEDIATION_DIR}/
-          4. Preserve all existing Helm templating syntax and functionality
+          Write the fixed YAML to: ${OUT_FILE}
           EOF
             fi
 
@@ -312,18 +398,16 @@ jobs:
             echo "::endgroup::"
           done
 
-      - name: Enforce kyverno namespace in all generated PolicyException YAMLs
+      # Guarantee namespace: kyverno in every generated PolicyException regardless of nctl ai output
+      - name: Enforce namespace kyverno in PolicyException YAMLs
         if: inputs.action == 'generate-exception'
         run: |
-          # Post-process every YAML to guarantee namespace: kyverno regardless of what nctl ai wrote.
           find "${POLICYEXCEPTION_DIR}" \( -name "*.yaml" -o -name "*.yml" \) | while IFS= read -r f; do
             python3 - "${f}" << 'PYEOF'
           import sys, yaml
-
           path = sys.argv[1]
-          with open(path, "r") as fh:
+          with open(path) as fh:
               docs = list(yaml.safe_load_all(fh))
-
           changed = False
           for doc in docs:
               if isinstance(doc, dict) and doc.get("kind") == "PolicyException":
@@ -331,11 +415,10 @@ jobs:
                   if doc["metadata"].get("namespace") != "kyverno":
                       doc["metadata"]["namespace"] = "kyverno"
                       changed = True
-
           if changed:
               with open(path, "w") as fh:
                   yaml.dump_all(docs, fh, default_flow_style=False, allow_unicode=True)
-              print(f"Enforced namespace: kyverno in {path}")
+              print(f"Enforced namespace: kyverno → {path}")
           PYEOF
           done
 
@@ -362,12 +445,12 @@ jobs:
           ACTION: ${{ inputs.action }}
         run: |
           {
-            echo "## Resource Processing Summary"
+            echo "## Processing Results"
             echo ""
-            echo "| Field | Value |"
+            echo "| | |"
             echo "|---|---|"
             echo "| Resources | \`${SELECTED}\` |"
-            echo "| Action | \`${ACTION}\` |"
+            echo "| Action    | \`${ACTION}\` |"
             echo ""
           } >> "$GITHUB_STEP_SUMMARY"
 
@@ -375,32 +458,31 @@ jobs:
             COUNT=$(find "${POLICYEXCEPTION_DIR}" \( -name "*.yaml" -o -name "*.yml" \) 2>/dev/null | wc -l | xargs)
             if [[ "${COUNT}" -gt 0 ]]; then
               {
-                echo "### ✅ PolicyException YAMLs generated (${COUNT} file(s))"
+                echo "### ✅ PolicyException YAMLs — ${COUNT} file(s) generated"
                 echo ""
                 echo "Download artifact: **policyexceptions-${{ github.run_id }}**"
                 echo ""
-                echo "All PolicyExceptions use \`namespace: kyverno\` as required by Kyverno."
+                echo "All exceptions carry \`namespace: kyverno\`."
                 echo ""
-                echo "Apply with:"
-                echo "\`\`\`"
-                echo "kubectl apply -f <extracted-artifact-dir>/"
+                echo "\`\`\`bash"
+                echo "kubectl apply -f <extracted-dir>/"
                 echo "\`\`\`"
               } >> "$GITHUB_STEP_SUMMARY"
             else
-              echo "### ⚠️ No PolicyException YAMLs were generated — check the step logs." >> "$GITHUB_STEP_SUMMARY"
+              echo "### ⚠️ No PolicyException YAMLs generated — check the **Process each selected resource** step logs." >> "$GITHUB_STEP_SUMMARY"
             fi
 
           elif [[ "${ACTION}" == "remediate" ]]; then
             COUNT=$(find "${REMEDIATION_DIR}" -type f 2>/dev/null | wc -l | xargs)
             if [[ "${COUNT}" -gt 0 ]]; then
               {
-                echo "### ✅ Remediated templates generated (${COUNT} file(s))"
+                echo "### ✅ Remediated YAMLs — ${COUNT} file(s) generated"
                 echo ""
                 echo "Download artifact: **remediated-yamls-${{ github.run_id }}**"
                 echo ""
-                echo "Review the changes and apply them back to your Helm chart."
+                echo "Review each file, then apply the relevant fixes to your Helm chart templates."
               } >> "$GITHUB_STEP_SUMMARY"
             else
-              echo "### ⚠️ No remediated files were generated — check the step logs." >> "$GITHUB_STEP_SUMMARY"
+              echo "### ⚠️ No remediated YAMLs generated — check the **Process each selected resource** step logs." >> "$GITHUB_STEP_SUMMARY"
             fi
           fi
