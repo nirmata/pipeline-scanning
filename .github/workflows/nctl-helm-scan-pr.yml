@@ -106,16 +106,27 @@ jobs:
         if: always() && hashFiles('report.json') != ''
         run: |
           set -euo pipefail
-          # Handles both "resources" and "subjects" field names across nctl versions
+          # nctl report format: policies[].namespaceScopedResources[].resources[]
+          # Resource name embeds kind as suffix: "release-name-my-nginx-chart (Deployment)"
           jq -r '
-            .results // [] |
-            map(select(.result == "fail")) |
-            map((.resources // .subjects // []) | .[]) |
-            map(select(
-              .kind == "Deployment"  or .kind == "StatefulSet" or
-              .kind == "DaemonSet"   or .kind == "ReplicaSet"  or
-              .kind == "Job"         or .kind == "CronJob"
-            ) | "\(.kind)/\(.name)") | unique | .[]
+            .policies // [] |
+            map(
+              .namespaceScopedResources // [] |
+              map(.resources // [] | .[]) | flatten |
+              map(select(
+                .rules // [] | map(select(.Status == "fail")) | length > 0
+              )) |
+              map(.name |
+                capture("^(?P<rname>.+) \\((?P<kind>[^)]+)\\)$") |
+                select(
+                  .kind == "Deployment"  or .kind == "StatefulSet" or
+                  .kind == "DaemonSet"   or .kind == "ReplicaSet"  or
+                  .kind == "Job"         or .kind == "CronJob"
+                ) |
+                "\(.kind)/\(.rname)"
+              )
+            ) |
+            flatten | unique | .[]
           ' report.json > violating_controllers.txt 2>/dev/null || true
 
           [[ -s violating_controllers.txt ]] &&
@@ -269,15 +280,20 @@ jobs:
             echo "::group::▶ ${ACTION}  →  ${KIND}/${NAME}"
 
             # ── Extract violations for this resource ──────────────────────
+            # Name in report is "release-name-my-nginx-chart (Deployment)" → match with KIND+NAME
             VIOLATIONS="$(jq -r --arg k "${KIND}" --arg n "${NAME}" '
-              .results // [] |
-              map(select(
-                .result == "fail" and
-                (((.resources // .subjects // []) |
-                  map(select(.kind == $k and .name == $n)) | length) > 0)
-              )) |
-              map("  policy: \(.policy // "unknown")\n  rule:   \(.rule // "unknown")\n  reason: \(.message // "")\n") |
-              .[]
+              .policies // [] |
+              map(. as $pol |
+                (.namespaceScopedResources // []) |
+                map(.resources // [] | .[]) | flatten |
+                map(select(.name == ($n + " (" + $k + ")"))) |
+                map(
+                  .rules // [] |
+                  map(select(.Status == "fail")) |
+                  map("  policy: \($pol.name)\n  rule:   \(.Name)\n  reason: \(.Message)\n")
+                ) | flatten
+              ) |
+              flatten | .[]
             ' report.json 2>/dev/null)"
 
             if [[ -z "${VIOLATIONS}" ]]; then
