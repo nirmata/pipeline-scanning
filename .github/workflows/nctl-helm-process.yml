@@ -327,6 +327,9 @@ jobs:
           EOF
             fi
 
+            # Snapshot dir before nctl ai so we can find what it actually creates
+            PRE_FILES="$(find "${POLICYEXCEPTION_DIR}" \( -name "*.yaml" -o -name "*.yml" \) 2>/dev/null | sort || true)"
+
             nctl ai --new-session \
               --allowed-dirs "$(pwd)" \
               --prompt "$(cat "${PROMPT_FILE}")" \
@@ -336,22 +339,31 @@ jobs:
 
             rm -f "${PROMPT_FILE}"
 
-            # ── Strip hallucinated policies from PolicyException ──────────
-            # nctl ai sometimes adds policies that never actually failed.
-            # Re-read report.json and keep only entries that truly violated.
-            if [[ "${ACTION}" == "generate-exception" && -f "${OUT_FILE}" ]]; then
-              python3 - "${OUT_FILE}" "${KIND}" "${NAME}" "${SELECTED_POLICIES}" << 'PYEOF'
+            # ── Strip hallucinated policies from every file nctl ai just created ──
+            # We compare the dir before/after so we process new files regardless of
+            # whatever filename nctl ai chose (it may ignore our suggested OUT_FILE).
+            if [[ "${ACTION}" == "generate-exception" ]]; then
+              POST_FILES="$(find "${POLICYEXCEPTION_DIR}" \( -name "*.yaml" -o -name "*.yml" \) 2>/dev/null | sort || true)"
+              NEW_FILES="$(comm -23 <(echo "${POST_FILES}") <(echo "${PRE_FILES}") 2>/dev/null || echo "${POST_FILES}")"
+
+              if [[ -z "${NEW_FILES}" ]]; then
+                echo "::warning::nctl ai created no files in ${POLICYEXCEPTION_DIR} for ${KIND}/${NAME}"
+              else
+                while IFS= read -r out_file; do
+                  [[ -z "${out_file}" ]] && continue
+                  echo "Filtering hallucinated policies from: ${out_file}"
+                  python3 - "${out_file}" "${KIND}" "${NAME}" "${SELECTED_POLICIES}" << 'PYEOF'
           import sys, yaml, json
 
-          out_file       = sys.argv[1]
-          kind           = sys.argv[2]
-          name           = sys.argv[3]
-          selected_filter = sys.argv[4]   # comma-separated policy names from checkboxes, or ""
+          out_file        = sys.argv[1]
+          kind            = sys.argv[2]
+          name            = sys.argv[3]
+          selected_filter = sys.argv[4]
 
-          # Collect the policies that actually failed for this resource
           with open("report.json") as f:
               report = json.load(f)
 
+          # Build the set of policies that actually failed for this resource
           actual = set()
           for pol in report.get("policies", []):
               for ns in pol.get("namespaceScopedResources", []):
@@ -361,12 +373,10 @@ jobs:
                               if rule.get("Status") == "fail":
                                   actual.add(pol["name"])
 
-          # Further restrict to checked policies when user selected specific ones
           if selected_filter.strip():
               checked = {p.strip() for p in selected_filter.split(",")}
               actual &= checked
 
-          # Rewrite the PolicyException keeping only actual violations
           with open(out_file) as f:
               docs = list(yaml.safe_load_all(f))
 
@@ -378,13 +388,15 @@ jobs:
               removed = len(excepts) - len(kept)
               doc["spec"]["exceptions"] = kept
               if removed:
-                  print(f"Removed {removed} extra policy entry/entries not in actual violations")
+                  print(f"Removed {removed} hallucinated policy entries from {out_file}")
 
           with open(out_file, "w") as f:
               yaml.dump_all(docs, f, default_flow_style=False, allow_unicode=True)
 
           print(f"PolicyException scoped to {len(actual)} violation(s): {', '.join(sorted(actual))}")
           PYEOF
+                done <<< "${NEW_FILES}"
+              fi
             fi
 
             echo "::endgroup::"
