@@ -208,7 +208,7 @@ jobs:
               i=$((i+1))
             done < violating_controllers.txt
 
-            # Per-resource violations breakdown — policy names are copyable for the selected_policies input
+            # Per-resource violations breakdown with copyable policy list
             echo "" >> "$GITHUB_STEP_SUMMARY"
             echo "#### Policy violations per resource" >> "$GITHUB_STEP_SUMMARY"
             while IFS= read -r resource; do
@@ -234,6 +234,25 @@ jobs:
                   ) | flatten
                 ) | flatten | .[]
               ' report.json >> "$GITHUB_STEP_SUMMARY" 2>/dev/null || true
+
+              # Copyable comma-separated policy list for the selected_policies field
+              POLICY_LIST="$(jq -r --arg k "${KIND}" --arg n "${NAME}" '
+                .policies // [] |
+                map(. as $pol |
+                  (.namespaceScopedResources // []) |
+                  map(.resources // [] | .[]) | flatten |
+                  map(select(.name == ($n + " (" + $k + ")"))) |
+                  map(.rules // [] | map(select(.Status == "fail")) | map($pol.name)) |
+                  flatten
+                ) | flatten | unique | join(",")
+              ' report.json 2>/dev/null || true)"
+              if [[ -n "${POLICY_LIST}" ]]; then
+                {
+                  echo ""
+                  echo "> **Copy into \`selected_policies\` to scope to only these violations:**"
+                  echo "> \`${POLICY_LIST}\`"
+                } >> "$GITHUB_STEP_SUMMARY"
+              fi
             done < violating_controllers.txt
 
             {
@@ -242,21 +261,16 @@ jobs:
               echo "### ▶️ Next step — process resources via GitHub UI"
               echo ""
               echo "1. [**→ Open: nctl Helm — process resources**](https://github.com/${{ github.repository }}/actions/workflows/nctl-helm-process.yml)"
-              echo "2. Click the **Run workflow** button on the right side of the page"
-              echo "3. In the dropdown, **change the branch to \`${{ github.ref_name }}\`** — the input fields will appear"
-              echo "4. Fill in the fields:"
+              echo "2. Click **Run workflow** (Branch: main)"
+              echo "3. Fill in the fields:"
               echo ""
               echo "   | Field | What to enter |"
               echo "   |---|---|"
               echo "   | **selected_resources** | resource name(s) from the table above, comma-separated |"
               echo "   | **action** | \`generate-exception\` or \`remediate\` |"
-              echo "   | **selected_policies** | *(optional)* policy name(s) from the violations table above — leave blank for all |"
+              echo "   | **selected_policies** | *(optional)* copy the policy list shown above each resource — leave blank to cover all violations |"
               echo ""
-              echo "   - \`generate-exception\` → Kyverno PolicyException YAML (\`namespace: kyverno\`)"
-              echo "   - \`remediate\`           → fixed K8s resource YAML with all violations resolved"
-              echo "   - **selected_policies** lets you generate a PolicyException for only specific violations"
-              echo ""
-              echo "5. Click **Run workflow** — download the output ZIP from the run's **Artifacts** section"
+              echo "4. Click **Run workflow** — download the output ZIP from the run's **Artifacts** section"
             } >> "$GITHUB_STEP_SUMMARY"
           else
             echo "### ✅ No pod controller violations found" >> "$GITHUB_STEP_SUMMARY"
