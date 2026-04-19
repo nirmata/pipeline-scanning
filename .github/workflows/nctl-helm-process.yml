@@ -335,6 +335,58 @@ jobs:
               || echo "::warning::nctl ai did not complete successfully for ${KIND}/${NAME}"
 
             rm -f "${PROMPT_FILE}"
+
+            # ── Strip hallucinated policies from PolicyException ──────────
+            # nctl ai sometimes adds policies that never actually failed.
+            # Re-read report.json and keep only entries that truly violated.
+            if [[ "${ACTION}" == "generate-exception" && -f "${OUT_FILE}" ]]; then
+              python3 - "${OUT_FILE}" "${KIND}" "${NAME}" "${SELECTED_POLICIES}" << 'PYEOF'
+          import sys, yaml, json
+
+          out_file       = sys.argv[1]
+          kind           = sys.argv[2]
+          name           = sys.argv[3]
+          selected_filter = sys.argv[4]   # comma-separated policy names from checkboxes, or ""
+
+          # Collect the policies that actually failed for this resource
+          with open("report.json") as f:
+              report = json.load(f)
+
+          actual = set()
+          for pol in report.get("policies", []):
+              for ns in pol.get("namespaceScopedResources", []):
+                  for res in ns.get("resources", []):
+                      if res.get("name") == f"{name} ({kind})":
+                          for rule in res.get("rules", []):
+                              if rule.get("Status") == "fail":
+                                  actual.add(pol["name"])
+
+          # Further restrict to checked policies when user selected specific ones
+          if selected_filter.strip():
+              checked = {p.strip() for p in selected_filter.split(",")}
+              actual &= checked
+
+          # Rewrite the PolicyException keeping only actual violations
+          with open(out_file) as f:
+              docs = list(yaml.safe_load_all(f))
+
+          for doc in docs:
+              if not (isinstance(doc, dict) and doc.get("kind") == "PolicyException"):
+                  continue
+              excepts = doc.get("spec", {}).get("exceptions", [])
+              kept    = [e for e in excepts if e.get("policyName") in actual]
+              removed = len(excepts) - len(kept)
+              doc["spec"]["exceptions"] = kept
+              if removed:
+                  print(f"Removed {removed} extra policy entry/entries not in actual violations")
+
+          with open(out_file, "w") as f:
+              yaml.dump_all(docs, f, default_flow_style=False, allow_unicode=True)
+
+          print(f"PolicyException scoped to {len(actual)} violation(s): {', '.join(sorted(actual))}")
+          PYEOF
+            fi
+
             echo "::endgroup::"
           done
 
