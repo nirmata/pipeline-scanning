@@ -28,36 +28,13 @@ on:
         options:
           - generate-exception
           - remediate
-      # ── Policy checkboxes (generate-exception only) ────────────────────────
-      # Check the policies you want to exempt. Leave ALL unchecked to cover every violation.
-      pol_disallow_capabilities_strict:
-        description: 'Policy: disallow-capabilities-strict (containers must drop ALL capabilities)'
-        type: boolean
-        default: false
-      pol_disallow_privilege_escalation:
-        description: 'Policy: disallow-privilege-escalation (privilege escalation disallowed)'
-        type: boolean
-        default: false
-      pol_require_run_as_nonroot:
-        description: 'Policy: require-run-as-nonroot (must not run as root)'
-        type: boolean
-        default: false
-      pol_restrict_seccomp_strict:
-        description: 'Policy: restrict-seccomp-strict (seccomp profile required)'
-        type: boolean
-        default: false
-      pol_disallow_privileged_containers:
-        description: 'Policy: disallow-privileged-containers (no privileged containers)'
-        type: boolean
-        default: false
-      pol_disallow_host_namespaces:
-        description: 'Policy: disallow-host-namespaces (no host PID / IPC / network)'
-        type: boolean
-        default: false
-      pol_restrict_volume_types:
-        description: 'Policy: restrict-volume-types (restricted volume types only)'
-        type: boolean
-        default: false
+      selected_policies:
+        description: >
+          Policies to include in the exception — paste from the scan summary.
+          Leave blank to cover ALL violations for the selected resource.
+          Example: disallow-capabilities-strict,require-run-as-nonroot
+        required: false
+        default: ''
 
 permissions:
   contents: read
@@ -149,41 +126,11 @@ jobs:
             echo "::warning::helm template produced no output — nctl ai will work from chart files directly"
           fi
 
-      - name: Build policy filter from checkboxes
-        id: policy_filter
-        env:
-          P_CAP:   ${{ inputs.pol_disallow_capabilities_strict }}
-          P_PRIV:  ${{ inputs.pol_disallow_privilege_escalation }}
-          P_ROOT:  ${{ inputs.pol_require_run_as_nonroot }}
-          P_SEC:   ${{ inputs.pol_restrict_seccomp_strict }}
-          P_PRIV2: ${{ inputs.pol_disallow_privileged_containers }}
-          P_HOST:  ${{ inputs.pol_disallow_host_namespaces }}
-          P_VOL:   ${{ inputs.pol_restrict_volume_types }}
-        run: |
-          POLICIES=()
-          [[ "${P_CAP}"   == "true" ]] && POLICIES+=("disallow-capabilities-strict")
-          [[ "${P_PRIV}"  == "true" ]] && POLICIES+=("disallow-privilege-escalation")
-          [[ "${P_ROOT}"  == "true" ]] && POLICIES+=("require-run-as-nonroot")
-          [[ "${P_SEC}"   == "true" ]] && POLICIES+=("restrict-seccomp-strict")
-          [[ "${P_PRIV2}" == "true" ]] && POLICIES+=("disallow-privileged-containers")
-          [[ "${P_HOST}"  == "true" ]] && POLICIES+=("disallow-host-namespaces")
-          [[ "${P_VOL}"   == "true" ]] && POLICIES+=("restrict-volume-types")
-
-          if [[ ${#POLICIES[@]} -gt 0 ]]; then
-            FILTER=""
-            for p in "${POLICIES[@]}"; do FILTER="${FILTER:+$FILTER,}${p}"; done
-            echo "PolicyException will be scoped to: ${FILTER}"
-          else
-            FILTER=""
-            echo "No policies checked — PolicyException will cover ALL violations."
-          fi
-          echo "value=${FILTER}" >> "$GITHUB_OUTPUT"
-
       - name: Process each selected resource
         env:
           SELECTED: ${{ inputs.selected_resources }}
           ACTION: ${{ inputs.action }}
-          SELECTED_POLICIES: ${{ steps.policy_filter.outputs.value }}
+          SELECTED_POLICIES: ${{ inputs.selected_policies }}
         run: |
           set -euo pipefail
           mkdir -p "${POLICYEXCEPTION_DIR}" "${REMEDIATION_DIR}"
@@ -447,7 +394,7 @@ jobs:
         env:
           SELECTED: ${{ inputs.selected_resources }}
           ACTION: ${{ inputs.action }}
-          SELECTED_POLICIES: ${{ steps.policy_filter.outputs.value }}
+          SELECTED_POLICIES: ${{ inputs.selected_policies }}
         run: |
           {
             echo "## Processing Results"
