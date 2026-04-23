@@ -17,6 +17,7 @@ concurrency:
 
 permissions:
   contents: read
+  actions: write
 
 env:
   CHART_PATH: charts/my-nginx-chart
@@ -117,22 +118,30 @@ jobs:
             {
               echo ""
               echo "---"
-              echo "### What would you like to do?"
+              echo "### Next steps"
               echo ""
-              echo "| Option | Description | Action |"
-              echo "|---|---|---|"
-              echo "| **Remediation** | Deploy the remediator agent to automatically fix violations and raise a PR | [▶ Trigger Remediation Workflow](https://github.com/${{ github.repository }}/actions/workflows/install-remediator.yml) |"
-              echo "| **PolicyException** | Generate Kyverno PolicyException YAMLs to suppress these violations | Coming soon |"
-              echo ""
-              echo "> **How to trigger remediation:** Click the link above, then click **Run workflow** on that page."
+              echo "| Option | Status |"
+              echo "|---|---|"
+              echo "| **Remediation** — remediator agent deploying to fix violations and raise a PR | ✅ Triggered automatically — [view run](https://github.com/${{ github.repository }}/actions/workflows/install-remediator.yml) |"
+              echo "| **PolicyException** — generate Kyverno exceptions to suppress these violations | Coming soon |"
             } >> "$GITHUB_STEP_SUMMARY"
 
           else
             echo "### ✅ No violations found — chart is compliant" >> "$GITHUB_STEP_SUMMARY"
           fi
 
+      - name: Trigger remediation workflow
+        if: steps.parse.outputs.violations_found == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.PAT }}
+        run: |
+          gh workflow run install-remediator.yml \
+            --repo "${{ github.repository }}" \
+            --ref remediation-helm-chart
+          echo "Remediation workflow triggered."
+
       - name: Fail pipeline on violations
         if: steps.parse.outputs.violations_found == 'true'
         run: |
-          echo "::error::Helm policy scan failed: ${{ steps.parse.outputs.violations_count }} violation(s) found in ${CHART_PATH}. See the job summary for details and remediation options."
+          echo "::error::Helm policy scan failed: ${{ steps.parse.outputs.violations_count }} violation(s) found in ${CHART_PATH}. Remediation workflow has been triggered automatically."
           exit 1
