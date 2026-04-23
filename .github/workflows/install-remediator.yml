@@ -1,0 +1,136 @@
+# Deploys the Nirmata remediator agent on a local kind cluster.
+# The agent scans Helm chart resources against VCS policies and creates PRs with fixes.
+#
+# Triggered manually from the Helm Policy Scan job summary, or via workflow_dispatch.
+#
+# Required secrets:
+#   NIRMATA_SERVICE_ACCOUNT_TOKEN — Nirmata service account token
+#   PAT                           — GitHub Personal Access Token (for CreatePR action)
+
+name: Install Remediator Agent
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  install-remediator:
+    name: Deploy remediator agent on kind cluster
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout remediation-helm-chart branch
+        uses: actions/checkout@v4
+        with:
+          ref: remediation-helm-chart
+
+      - name: Install kind
+        run: |
+          set -euo pipefail
+          curl -Lo ./kind https://kind.sigs.k8s.io/dl/v0.27.0/kind-linux-amd64
+          chmod +x ./kind
+          sudo mv ./kind /usr/local/bin/kind
+          kind version
+
+      - name: Install Helm
+        run: |
+          curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+          helm version
+
+      - name: Create kind cluster
+        run: |
+          kind create cluster --name remediator-demo --wait 120s
+          kubectl cluster-info
+
+      - name: Wait for all kube-system pods to be ready
+        run: |
+          echo "Waiting for kube-system pods..."
+          kubectl wait --for=condition=ready pod --all -n kube-system --timeout=180s
+          echo "All kube-system pods ready."
+          kubectl get pods -A
+
+      - name: Create nirmata namespace
+        run: kubectl create namespace nirmata
+
+      - name: Create Nirmata service account token secret
+        run: |
+          kubectl create secret generic nirmata-service-account-token \
+            --from-literal=service-account-token="${{ secrets.NIRMATA_SERVICE_ACCOUNT_TOKEN }}" \
+            -n nirmata
+
+      - name: Create GitHub PAT secret
+        run: |
+          kubectl create secret generic github-pat-token \
+            --from-literal=token="${{ secrets.PAT }}" \
+            -n nirmata
+
+      - name: Clone kyverno-charts (remediator Helm chart)
+        run: |
+          git clone --depth=1 https://github.com/nirmata/kyverno-charts.git /tmp/kyverno-charts
+
+      - name: Install remediator agent
+        run: |
+          set -euo pipefail
+          helm upgrade --install remediator-agent /tmp/kyverno-charts/charts/go-agent-remediator \
+            --namespace nirmata \
+            --values remediator-helm-values.yaml \
+            --wait \
+            --timeout 5m
+          echo "Remediator agent installed successfully."
+
+      - name: Verify deployment
+        run: |
+          echo "=== Pods in nirmata namespace ==="
+          kubectl get pods -n nirmata -o wide
+          echo ""
+          echo "=== Remediator CR ==="
+          kubectl get remediator -n nirmata 2>/dev/null || echo "(Remediator CR not yet created)"
+          echo ""
+          echo "=== LLMConfig CR ==="
+          kubectl get llmconfig -n nirmata 2>/dev/null || echo "(LLMConfig CR not yet created)"
+
+      - name: Write job summary
+        if: always()
+        run: |
+          STATUS="unknown"
+          if kubectl get deployment -n nirmata -l app.kubernetes.io/instance=remediator-agent &>/dev/null 2>&1; then
+            READY=$(kubectl get deployment -n nirmata -l app.kubernetes.io/instance=remediator-agent \
+              -o jsonpath='{.items[0].status.readyReplicas}' 2>/dev/null || echo "0")
+            [[ "${READY}" -ge 1 ]] && STATUS="success" || STATUS="pending"
+          else
+            STATUS="failed"
+          fi
+
+          {
+            echo "## Remediator Agent Installation"
+            echo ""
+            echo "| | |"
+            echo "|---|---|"
+            echo "| Cluster   | \`remediator-demo\` (kind) |"
+            echo "| Namespace | \`nirmata\` |"
+            echo "| Chart     | \`go-agent-remediator\` from nirmata/kyverno-charts |"
+            echo "| Values    | \`remediator-helm-values.yaml\` |"
+            echo ""
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          if [[ "${STATUS}" == "success" ]]; then
+            {
+              echo "### ✅ Remediator agent is running"
+              echo ""
+              echo "The agent will:"
+              echo "1. Clone the policy and resource repositories defined in \`remediator-helm-values.yaml\`"
+              echo "2. Scan the Helm chart resources against the configured policies"
+              echo "3. Generate fixes and open a pull request in the target repository"
+              echo ""
+              echo "**Next step:** Check the [Pull Requests](https://github.com/${{ github.repository }}/pulls) tab for the remediation PR created by the agent."
+            } >> "$GITHUB_STEP_SUMMARY"
+          else
+            {
+              echo "### ❌ Deployment did not complete successfully"
+              echo ""
+              echo "Check the **Install remediator agent** and **Verify deployment** step logs for details."
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi

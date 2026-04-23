@@ -1,0 +1,138 @@
+# Scans the Helm chart on remediation-helm-chart branch against PSS policies.
+# Fails the pipeline if violations are found and provides links to remediation workflows.
+#
+# Required secrets: none (policy sets are built-in)
+# Optional: run manually via workflow_dispatch
+
+name: Helm Policy Scan
+
+on:
+  push:
+    branches: [remediation-helm-chart]
+  workflow_dispatch:
+
+concurrency:
+  group: helm-scan-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  CHART_PATH: charts/my-nginx-chart
+  POLICY_SETS: pss-baseline,pss-restricted
+
+jobs:
+  scan:
+    name: Scan Helm chart for policy violations
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Helm
+        run: |
+          curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+          helm version
+
+      - name: Install nctl
+        run: |
+          set -euo pipefail
+          curl -fsSL https://downloads.nirmata.io/nctl/install.sh | bash
+          echo "$(dirname "$(command -v nctl)")" >> "${GITHUB_PATH}"
+          nctl version
+
+      - name: Scan Helm chart
+        id: scan
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          nctl scan helm -r "${CHART_PATH}" --policy-sets "${POLICY_SETS}" -o json | tee report.json
+
+      - name: Parse violations
+        id: parse
+        if: always() && hashFiles('report.json') != ''
+        run: |
+          set -euo pipefail
+
+          # Extract flat list of violations: resource | policy | rule | severity | message
+          jq -r '
+            .policies // [] |
+            map(. as $pol |
+              (.namespaceScopedResources // []) |
+              map(.resources // [] | .[]) | flatten |
+              map(. as $res |
+                (.rules // []) |
+                map(select(.Status == "fail")) |
+                map({
+                  resource: $res.name,
+                  policy:   $pol.name,
+                  rule:     .Name,
+                  severity: .Severity,
+                  message:  .Message
+                })
+              ) | flatten
+            ) | flatten | .[]
+          ' report.json > violations.json 2>/dev/null || echo '[]' > violations.json
+
+          COUNT=$(jq -s 'length' violations.json 2>/dev/null || echo 0)
+          echo "violations_count=${COUNT}" >> "$GITHUB_OUTPUT"
+          if [[ "${COUNT}" -gt 0 ]]; then
+            echo "violations_found=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "violations_found=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Write job summary
+        if: always()
+        run: |
+          {
+            echo "## Helm Policy Scan"
+            echo ""
+            echo "| | |"
+            echo "|---|---|"
+            echo "| Branch | \`${{ github.ref_name }}\` |"
+            echo "| Chart  | \`${CHART_PATH}\` |"
+            echo "| Policy sets | \`${POLICY_SETS}\` |"
+            echo "| Commit | \`${{ github.sha }}\` |"
+            echo ""
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          if [[ "${{ steps.parse.outputs.violations_found }}" == "true" ]]; then
+            {
+              echo "### ❌ Pipeline failed — ${{ steps.parse.outputs.violations_count }} violation(s) detected"
+              echo ""
+              echo "| Resource | Policy | Rule | Severity |"
+              echo "|---|---|---|---|"
+            } >> "$GITHUB_STEP_SUMMARY"
+
+            # Write one row per violation
+            jq -r '.resource + " | " + .policy + " | " + .rule + " | " + .severity' \
+              violations.json 2>/dev/null | \
+              while IFS='|' read -r res pol rule sev; do
+                echo "| $(echo "$res" | xargs) | $(echo "$pol" | xargs) | $(echo "$rule" | xargs) | $(echo "$sev" | xargs) |" >> "$GITHUB_STEP_SUMMARY"
+              done
+
+            {
+              echo ""
+              echo "---"
+              echo "### What would you like to do?"
+              echo ""
+              echo "| Option | Description | Action |"
+              echo "|---|---|---|"
+              echo "| **Remediation** | Deploy the remediator agent to automatically fix violations and raise a PR | [▶ Trigger Remediation Workflow](https://github.com/${{ github.repository }}/actions/workflows/install-remediator.yml) |"
+              echo "| **PolicyException** | Generate Kyverno PolicyException YAMLs to suppress these violations | Coming soon |"
+              echo ""
+              echo "> **How to trigger remediation:** Click the link above, then click **Run workflow** on that page."
+            } >> "$GITHUB_STEP_SUMMARY"
+
+          else
+            echo "### ✅ No violations found — chart is compliant" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Fail pipeline on violations
+        if: steps.parse.outputs.violations_found == 'true'
+        run: |
+          echo "::error::Helm policy scan failed: ${{ steps.parse.outputs.violations_count }} violation(s) found in ${CHART_PATH}. See the job summary for details and remediation options."
+          exit 1
