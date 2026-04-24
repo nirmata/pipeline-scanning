@@ -49,7 +49,9 @@ jobs:
         continue-on-error: true
         run: |
           set -euo pipefail
-          nctl scan helm -r "${CHART_PATH}" --policy-sets "${POLICY_SETS}" -o json | tee report.json
+          git clone https://github.com/nsagark/nginx.git
+          cd nginx && git checkout exceptions-in-pipelines
+          nctl scan helm -r "${CHART_PATH}" -p "policies" -o json | tee report.json
 
       - name: Parse violations
         id: parse
