@@ -212,7 +212,7 @@ remediator:
           policyRefs:
             - custom-policies
   remediation:
-    schedule: "0 */6 * * *"
+    schedule: "*/2 * * * *"
     eventPolling:
       enabled: true
       # intervalMinutes: 5  # Optional: polling interval in minutes (default: 5)
