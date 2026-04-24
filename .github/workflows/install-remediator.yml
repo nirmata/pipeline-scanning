@@ -48,8 +48,9 @@ jobs:
 
       - name: Install yq
         run: |
-          curl -fsSL https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64 \
-            -o /usr/local/bin/yq && chmod +x /usr/local/bin/yq
+          sudo curl -fsSL https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64 \
+            -o /usr/local/bin/yq
+          sudo chmod +x /usr/local/bin/yq
           yq --version
 
       - name: Fetch policy manifest from exceptions-in-pipelines
