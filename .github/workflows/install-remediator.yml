@@ -79,13 +79,13 @@ jobs:
               exit 1
             fi
 
-            NAME=$(yq e ".policies[${IDX}].name"         /tmp/manifest.yaml)
-            PATH=$(yq e ".policies[${IDX}].path"         /tmp/manifest.yaml)
+            NAME=$(yq e ".policies[${IDX}].name"           /tmp/manifest.yaml)
+            POLICY_PATH=$(yq e ".policies[${IDX}].path"  /tmp/manifest.yaml)
             REF=$(yq e ".policies[${IDX}].ref"           /tmp/manifest.yaml)
             RES=$(yq e ".policies[${IDX}].resourceName"  /tmp/manifest.yaml)
             PREFIX=$(yq e ".policies[${IDX}].branchPrefix" /tmp/manifest.yaml)
 
-            echo "Generating VCS patch for: ${NAME} (${PATH})"
+            echo "Generating VCS patch for: ${NAME} (${POLICY_PATH})"
 
             cat > /tmp/vcs-patch.yaml << EOF
           remediator:
@@ -94,7 +94,7 @@ jobs:
                 policies:
                   - name: ${NAME}
                     repo: ${REPO}
-                    path: ${PATH}
+                    path: ${POLICY_PATH}
                     ref: ${REF}
                 resources:
                   - name: ${RES}
