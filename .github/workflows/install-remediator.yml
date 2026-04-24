@@ -217,23 +217,40 @@ jobs:
           kubectl wait --for=condition=ready pod -l app.kubernetes.io/instance=remediator-agent -n nirmata --timeout=120s
           echo "Agent is back up."
 
-      - name: Tail agent logs until PR created (max 8 minutes)
+      - name: Tail agent logs until PR(s) created (max 8 minutes)
         run: |
+          # "All violations" creates one PR per resource entry (2 total)
+          if [[ "${{ inputs.policy_group }}" == "All violations" ]]; then
+            EXPECTED_PRS=2
+          else
+            EXPECTED_PRS=1
+          fi
+          echo "Waiting for ${EXPECTED_PRS} PR(s) to be created..."
+
           POD=$(kubectl get pod -n nirmata -l app.kubernetes.io/instance=remediator-agent \
             -o jsonpath='{.items[0].metadata.name}')
           echo "Tailing logs from pod: ${POD}"
           echo "---"
+
+          TMPCOUNT=$(mktemp)
+          echo 0 > "${TMPCOUNT}"
+
           timeout 480 kubectl logs -n nirmata "${POD}" --follow | \
             while IFS= read -r line; do
               echo "$line"
               if [[ "$line" == *"Pull request created"* ]]; then
-                echo "---"
-                echo "Pull request created successfully. Stopping log tail."
-                exit 0
+                COUNT=$(cat "${TMPCOUNT}")
+                COUNT=$((COUNT + 1))
+                echo "${COUNT}" > "${TMPCOUNT}"
+                echo "--- PR ${COUNT}/${EXPECTED_PRS} created."
+                if [[ "${COUNT}" -ge "${EXPECTED_PRS}" ]]; then
+                  echo "All ${EXPECTED_PRS} PR(s) created. Stopping log tail."
+                  exit 0
+                fi
               fi
             done || true
           echo "---"
-          echo "Log tail ended."
+          echo "Log tail ended (got $(cat "${TMPCOUNT}")/${EXPECTED_PRS} PR(s))."
 
       - name: Inspect remediation state
         if: always()
