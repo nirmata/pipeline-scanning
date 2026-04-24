@@ -200,17 +200,27 @@ remediator:
         namespace: ""
     vcs:
       policies:
-        - name: custom-policies
+        - name: seccomp-policy
           repo: https://github.com/nsagark/nginx
-          path: policies
+          path: policies/seccomp
+          ref: exceptions-in-pipelines
+        - name: resource-limits-policy
+          repo: https://github.com/nsagark/nginx
+          path: policies/resource-limits
           ref: exceptions-in-pipelines
       resources:
-        - name: nginx-deployment
+        - name: nginx-seccomp-fix
           repo: https://github.com/nsagark/nginx
           path: ./
           ref: remediation-helm-chart
           policyRefs:
-            - custom-policies
+            - seccomp-policy
+        - name: nginx-resource-limits-fix
+          repo: https://github.com/nsagark/nginx
+          path: ./
+          ref: remediation-helm-chart
+          policyRefs:
+            - resource-limits-policy
   remediation:
     schedule: "*/5 * * * *"
     eventPolling:

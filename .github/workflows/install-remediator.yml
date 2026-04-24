@@ -11,13 +11,23 @@ name: Install Remediator Agent
 
 on:
   workflow_dispatch:
+    inputs:
+      policy_group:
+        description: "Policy group to remediate"
+        required: true
+        default: "All violations"
+        type: choice
+        options:
+          - All violations
+          - Seccomp violations
+          - Resource limit violations
 
 permissions:
   contents: read
 
 jobs:
   install-remediator:
-    name: Deploy remediator agent on kind cluster
+    name: Deploy remediator — ${{ inputs.policy_group }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
 
@@ -73,6 +83,25 @@ jobs:
             --from-literal=mapping='[]' \
             -n nirmata
 
+      - name: Select values file based on policy group
+        id: values
+        run: |
+          case "${{ inputs.policy_group }}" in
+            "Seccomp violations")
+              echo "file=remediator-helm-values-seccomp.yaml" >> "$GITHUB_OUTPUT"
+              echo "label=seccomp" >> "$GITHUB_OUTPUT"
+              ;;
+            "Resource limit violations")
+              echo "file=remediator-helm-values-resource-limits.yaml" >> "$GITHUB_OUTPUT"
+              echo "label=resource-limits" >> "$GITHUB_OUTPUT"
+              ;;
+            *)
+              echo "file=remediator-helm-values.yaml" >> "$GITHUB_OUTPUT"
+              echo "label=all" >> "$GITHUB_OUTPUT"
+              ;;
+          esac
+          echo "Using values file: $(cat $GITHUB_OUTPUT | grep file | cut -d= -f2)"
+
       - name: Clone kyverno-charts (remediator Helm chart)
         run: |
           git clone --depth=1 https://github.com/nirmata/kyverno-charts.git /tmp/kyverno-charts
@@ -82,7 +111,7 @@ jobs:
           set -euo pipefail
           helm upgrade --install remediator-agent /tmp/kyverno-charts/charts/go-agent-remediator \
             --namespace nirmata \
-            --values remediator-helm-values.yaml \
+            --values ${{ steps.values.outputs.file }} \
             --set image.repository=ghcr.io/nirmata/go-agent-remediator \
             --wait \
             --timeout 10m
