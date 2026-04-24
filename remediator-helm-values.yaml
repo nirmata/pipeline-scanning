@@ -6,7 +6,7 @@ crds:
 replicaCount: 1
 
 image:
-  repository: reg.nirmata.io/nirmata/go-nirmata-agent
+  repository: ghcr.io/nirmata/go-agent-remediator
   pullPolicy: IfNotPresent
 
 imagePullSecrets: []
