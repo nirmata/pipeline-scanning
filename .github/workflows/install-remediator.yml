@@ -102,6 +102,20 @@ jobs:
           echo "=== LLMConfig CR ==="
           kubectl get llmconfig -n nirmata 2>/dev/null || echo "(LLMConfig CR not yet created)"
 
+      - name: Bounce agent to trigger immediate remediation cycle
+        run: |
+          echo "Scaling down remediator agent..."
+          kubectl scale deployment remediator-agent -n nirmata --replicas=0
+          kubectl wait --for=delete pod -l app.kubernetes.io/instance=remediator-agent -n nirmata --timeout=60s
+
+          echo "Deleting all RemediationRecord CRs..."
+          kubectl delete remediationrecord --all -n nirmata 2>/dev/null || echo "(no RemediationRecords found)"
+
+          echo "Scaling back up..."
+          kubectl scale deployment remediator-agent -n nirmata --replicas=1
+          kubectl wait --for=condition=ready pod -l app.kubernetes.io/instance=remediator-agent -n nirmata --timeout=120s
+          echo "Agent is back up."
+
       - name: Tail agent logs for 5 minutes
         run: |
           POD=$(kubectl get pod -n nirmata -l app.kubernetes.io/instance=remediator-agent \
