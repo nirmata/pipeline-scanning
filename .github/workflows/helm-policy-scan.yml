@@ -1,7 +1,7 @@
-# Scans the Helm chart on remediation-helm-chart branch against PSS policies.
+# Scans the Helm chart on remediation-helm-chart branch against custom policies
+# from the exceptions-in-pipelines branch (policies/seccomp, policies/resource-limits).
 # Fails the pipeline if violations are found and shows per-violation remediate buttons.
 #
-# Required secrets: none (policy sets are built-in)
 # Optional: run manually via workflow_dispatch
 
 name: Helm Policy Scan
@@ -20,8 +20,9 @@ permissions:
 
 env:
   CHART_PATH: charts/my-nginx-chart
-  #CHART_PATH: charts/my-nginx-chart
-  POLICY_SETS: pss-baseline,pss-restricted
+  POLICIES_REPO: https://github.com/nsagark/nginx
+  POLICIES_BRANCH: exceptions-in-pipelines
+  POLICIES_PATH: policies
   REMEDIATION_WORKFLOW_URL: https://github.com/${{ github.repository }}/actions/workflows/install-remediator.yml
 
 jobs:
@@ -99,7 +100,7 @@ jobs:
             echo "|---|---|"
             echo "| Branch | \`${{ github.ref_name }}\` |"
             echo "| Chart  | \`${CHART_PATH}\` |"
-            echo "| Policy sets | \`${POLICY_SETS}\` |"
+            echo "| Policies | \`${POLICIES_BRANCH}:${POLICIES_PATH}\` |"
             echo "| Commit | \`${{ github.sha }}\` |"
             echo ""
           } >> "$GITHUB_STEP_SUMMARY"
