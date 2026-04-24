@@ -1,4 +1,4 @@
-# Helm Policy Scan & Exception Automation.
+# Helm Policy Scan & Exception Automation
 
 Automatically scans your Helm chart for Kyverno policy violations and lets you generate **PolicyException YAMLs** or **remediated resource YAMLs** from the GitHub Actions UI — no local tooling needed.
 
