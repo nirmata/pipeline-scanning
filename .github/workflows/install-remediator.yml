@@ -116,15 +116,30 @@ jobs:
           kubectl wait --for=condition=ready pod -l app.kubernetes.io/instance=remediator-agent -n nirmata --timeout=120s
           echo "Agent is back up."
 
-      - name: Tail agent logs for 5 minutes
+      - name: Tail agent logs for 8 minutes
         run: |
           POD=$(kubectl get pod -n nirmata -l app.kubernetes.io/instance=remediator-agent \
             -o jsonpath='{.items[0].metadata.name}')
           echo "Tailing logs from pod: ${POD}"
           echo "---"
-          timeout 300 kubectl logs -n nirmata "${POD}" --follow || true
+          timeout 480 kubectl logs -n nirmata "${POD}" --follow || true
           echo "---"
-          echo "5-minute log tail complete."
+          echo "Log tail complete."
+
+      - name: Inspect remediation state
+        if: always()
+        run: |
+          echo "=== RemediationRecords ==="
+          kubectl get remediationrecord -n nirmata 2>/dev/null || echo "(none)"
+          echo ""
+          echo "=== RemediationRecord details ==="
+          kubectl describe remediationrecord -n nirmata 2>/dev/null || echo "(none)"
+          echo ""
+          echo "=== Remediator CR status ==="
+          kubectl get remediator nirmata-agent -n nirmata -o yaml 2>/dev/null || echo "(not found)"
+          echo ""
+          echo "=== Namespace events ==="
+          kubectl get events -n nirmata --sort-by='.lastTimestamp' 2>/dev/null | tail -30
 
       - name: Write job summary
         if: always()
