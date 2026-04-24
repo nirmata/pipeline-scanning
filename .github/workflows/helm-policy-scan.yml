@@ -20,7 +20,8 @@ permissions:
   actions: write
 
 env:
-  CHART_PATH: charts/my-nginx-chart
+  CHART_PATH: .
+  #CHART_PATH: charts/my-nginx-chart
   POLICY_SETS: pss-baseline,pss-restricted
 
 jobs:
