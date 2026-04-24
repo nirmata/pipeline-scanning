@@ -6,6 +6,8 @@
 # Required secrets:
 #   NIRMATA_SERVICE_ACCOUNT_TOKEN — Nirmata service account token
 #   PAT                           — GitHub Personal Access Token (for CreatePR action)
+#   REGISTRY_USERNAME             — Username for reg.nirmata.io (to pull the agent image)
+#   REGISTRY_TOKEN                — Password/token for reg.nirmata.io
 
 name: Install Remediator Agent
 
@@ -67,6 +69,14 @@ jobs:
             --from-literal=token="${{ secrets.PAT }}" \
             -n nirmata
 
+      - name: Create image pull secret for reg.nirmata.io
+        run: |
+          kubectl create secret docker-registry nirmata-registry \
+            --docker-server=reg.nirmata.io \
+            --docker-username="${{ secrets.REGISTRY_USERNAME }}" \
+            --docker-password="${{ secrets.REGISTRY_TOKEN }}" \
+            -n nirmata
+
       - name: Clone kyverno-charts (remediator Helm chart)
         run: |
           git clone --depth=1 https://github.com/nirmata/kyverno-charts.git /tmp/kyverno-charts
@@ -77,9 +87,19 @@ jobs:
           helm upgrade --install remediator-agent /tmp/kyverno-charts/charts/go-agent-remediator \
             --namespace nirmata \
             --values remediator-helm-values.yaml \
+            --set 'imagePullSecrets[0].name=nirmata-registry' \
             --wait \
-            --timeout 5m
+            --timeout 10m
           echo "Remediator agent installed successfully."
+
+      - name: Show pod status on failure
+        if: failure()
+        run: |
+          echo "=== Pod status ==="
+          kubectl get pods -n nirmata -o wide
+          echo ""
+          echo "=== Pod events ==="
+          kubectl describe pods -n nirmata | grep -A 20 "Events:"
 
       - name: Verify deployment
         run: |
