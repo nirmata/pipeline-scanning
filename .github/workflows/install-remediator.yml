@@ -122,15 +122,23 @@ jobs:
           kubectl wait --for=condition=ready pod -l app.kubernetes.io/instance=remediator-agent -n nirmata --timeout=120s
           echo "Agent is back up."
 
-      - name: Tail agent logs for 8 minutes
+      - name: Tail agent logs until PR created (max 8 minutes)
         run: |
           POD=$(kubectl get pod -n nirmata -l app.kubernetes.io/instance=remediator-agent \
             -o jsonpath='{.items[0].metadata.name}')
           echo "Tailing logs from pod: ${POD}"
           echo "---"
-          timeout 480 kubectl logs -n nirmata "${POD}" --follow || true
+          timeout 480 kubectl logs -n nirmata "${POD}" --follow | \
+            while IFS= read -r line; do
+              echo "$line"
+              if [[ "$line" == *"Pull request created"* ]]; then
+                echo "---"
+                echo "Pull request created successfully. Stopping log tail."
+                exit 0
+              fi
+            done || true
           echo "---"
-          echo "Log tail complete."
+          echo "Log tail ended."
 
       - name: Inspect remediation state
         if: always()
