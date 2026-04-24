@@ -1,7 +1,10 @@
 # Scans the Helm chart on remediation-helm-chart branch against custom policies
 # from the exceptions-in-pipelines branch (policies/seccomp, policies/resource-limits).
-# Fails the pipeline if violations are found and shows per-violation remediate buttons.
+# Publishes results to NCH, then shows per-violation action buttons:
+#   ▶ Fix           — triggers the remediator agent to open a fix PR
+#   🔒 Exception    — links to NCH where the user can request a policy exception
 #
+# Required secrets: NIRMATA_URL, NIRMATA_TEAM_TOKEN
 # Optional: run manually via workflow_dispatch
 
 name: Helm Policy Scan
@@ -23,6 +26,7 @@ env:
   POLICIES_REPO: https://github.com/nsagark/nginx
   POLICIES_BRANCH: exceptions-in-pipelines
   POLICIES_PATH: policies
+  NIRMATA_URL: ${{ secrets.NIRMATA_URL }}
   REMEDIATION_WORKFLOW_URL: https://github.com/${{ github.repository }}/actions/workflows/install-remediator.yml
 
 jobs:
@@ -53,7 +57,9 @@ jobs:
           set -euo pipefail
           git clone https://github.com/nsagark/nginx.git
           cd nginx && git checkout exceptions-in-pipelines && cd ..
-          nctl scan helm -r "${CHART_PATH}" -p "nginx/policies" -o json | tee report.json
+          nctl scan helm -r "${CHART_PATH}" -p "nginx/policies" -o json \
+            --publish --url "${NIRMATA_URL}" --token "${{ secrets.NIRMATA_TEAM_TOKEN }}" \
+            | tee report.json
 
       - name: Parse violations
         id: parse
@@ -105,13 +111,19 @@ jobs:
             echo ""
           } >> "$GITHUB_STEP_SUMMARY"
 
+          # Build the NCH exception URL for this repository
+          ENCODED_REPO=$(python3 -c "import urllib.parse; print(urllib.parse.quote('${POLICIES_REPO}', safe=''))")
+          NCH_EXCEPTION_URL="${NIRMATA_URL}/webclient/#clusters/policyReport/repositoryDetails?repo=${ENCODED_REPO}&backurl=clustersPolicyReport%2Frepositories&filter.status.value=fail"
+
           if [[ "${{ steps.parse.outputs.violations_found }}" == "true" ]]; then
             {
               echo "### ❌ ${{ steps.parse.outputs.violations_count }} violation(s) detected"
               echo ""
-              echo "Choose which violations to remediate. Each button opens the remediation workflow — select the matching option from the **Policy group** dropdown and click **Run workflow**."
+              echo "For each violation, choose an action:"
+              echo "- **▶ Fix** — triggers the remediator agent to open a PR with an automated fix"
+              echo "- **🔒 Exception** — opens NCH where you can log in and request a policy exception"
               echo ""
-              echo "| Violation | Policy | Rule | Severity | Remediate |"
+              echo "| Violation | Policy | Rule | Severity | Actions |"
               echo "|---|---|---|---|---|"
             } >> "$GITHUB_STEP_SUMMARY"
 
@@ -130,25 +142,32 @@ jobs:
                   *)           label="All violations" ;;
                 esac
 
-                echo "| \`${res}\` | \`${pol}\` | \`${rule}\` | ${sev} | [▶ Fix — select **\"${label}\"**](${WORKFLOW_URL}) |" \
+                echo "| \`${res}\` | \`${pol}\` | \`${rule}\` | ${sev} | [▶ Fix](${WORKFLOW_URL}) · [🔒 Exception](${NCH_EXCEPTION_URL}) |" \
                   >> "$GITHUB_STEP_SUMMARY"
               done
 
             {
               echo ""
               echo "---"
-              echo "### How to remediate"
+              echo "### How to act on a violation"
               echo ""
-              echo "1. Click a **▶ Fix** button above"
-              echo "2. Click **Run workflow** (top-right)"
-              echo "3. Select the **Policy group** that matches the violation"
-              echo "4. Click **Run workflow** — the agent will create a PR with the fix"
+              echo "#### Option 1 — Automated fix (opens a PR)"
+              echo "1. Click **▶ Fix** for the violation you want to fix"
+              echo "2. Click **Run workflow** (top-right of the remediator page)"
+              echo "3. Select the matching **Policy group** from the dropdown"
+              echo "4. Click **Run workflow** — the agent creates a PR with the fix"
               echo ""
-              echo "| Policy group option | Fixes |"
+              echo "| Policy group | Fixes |"
               echo "|---|---|"
               echo "| **Seccomp violations** | \`restrict-seccomp-strict\` — adds \`seccompProfile: RuntimeDefault\` |"
               echo "| **Resource limit violations** | \`require-requests-limits\` — adds CPU/memory requests and limits |"
               echo "| **All violations** | Fixes both in separate PRs |"
+              echo ""
+              echo "#### Option 2 — Policy exception (via NCH)"
+              echo "1. Click **🔒 Exception** for the violation you want to exempt"
+              echo "2. Log in to NCH when prompted"
+              echo "3. Select the violation and submit an exception request"
+              echo "4. Once approved, the exception will be applied and future scans will pass"
             } >> "$GITHUB_STEP_SUMMARY"
 
           else
@@ -158,5 +177,5 @@ jobs:
       - name: Fail pipeline on violations
         if: steps.parse.outputs.violations_found == 'true'
         run: |
-          echo "::error::Helm policy scan failed: ${{ steps.parse.outputs.violations_count }} violation(s) found in ${CHART_PATH}. See job summary for remediation options."
+          echo "::error::Helm policy scan failed: ${{ steps.parse.outputs.violations_count }} violation(s) found in ${CHART_PATH}. See job summary to fix violations or request policy exceptions."
           exit 1
