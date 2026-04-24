@@ -194,6 +194,10 @@ remediator:
   environment:
     type: localCluster  # Options: localCluster, argoHub (vcsTarget can be used with any environment type)
   target:
+    localCluster:
+      repoNamespaceMappingRef:
+        name: ""
+        namespace: ""
     vcs:
       policies:
         - name: custom-policies
