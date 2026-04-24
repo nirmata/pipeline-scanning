@@ -102,6 +102,16 @@ jobs:
           echo "=== LLMConfig CR ==="
           kubectl get llmconfig -n nirmata 2>/dev/null || echo "(LLMConfig CR not yet created)"
 
+      - name: Tail agent logs for 5 minutes
+        run: |
+          POD=$(kubectl get pod -n nirmata -l app.kubernetes.io/instance=remediator-agent \
+            -o jsonpath='{.items[0].metadata.name}')
+          echo "Tailing logs from pod: ${POD}"
+          echo "---"
+          timeout 300 kubectl logs -n nirmata "${POD}" --follow || true
+          echo "---"
+          echo "5-minute log tail complete."
+
       - name: Write job summary
         if: always()
         run: |
