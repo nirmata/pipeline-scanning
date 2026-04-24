@@ -6,6 +6,10 @@
 # Required secrets:
 #   NIRMATA_SERVICE_ACCOUNT_TOKEN — Nirmata service account token
 #   PAT                           — GitHub Personal Access Token (for CreatePR action)
+#
+# Policy groups are defined in policies/manifest.yaml on the exceptions-in-pipelines branch.
+# To add a new policy: add the policy file, update manifest.yaml, add an option to the
+# policy_group dropdown below — no values files to create or maintain.
 
 name: Install Remediator Agent
 
@@ -25,6 +29,11 @@ on:
 permissions:
   contents: read
 
+env:
+  NGINX_REPO: https://github.com/nsagark/nginx
+  CHART_REF: remediation-helm-chart
+  POLICIES_BRANCH: exceptions-in-pipelines
+
 jobs:
   install-remediator:
     name: Deploy remediator — ${{ inputs.policy_group }}
@@ -36,6 +45,74 @@ jobs:
         uses: actions/checkout@v4
         with:
           ref: remediation-helm-chart
+
+      - name: Install yq
+        run: |
+          curl -fsSL https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64 \
+            -o /usr/local/bin/yq && chmod +x /usr/local/bin/yq
+          yq --version
+
+      - name: Fetch policy manifest from exceptions-in-pipelines
+        run: |
+          git fetch origin exceptions-in-pipelines
+          git show origin/exceptions-in-pipelines:policies/manifest.yaml > /tmp/manifest.yaml
+          echo "Loaded manifest:"
+          cat /tmp/manifest.yaml
+
+      - name: Generate VCS values patch from manifest
+        id: patch
+        run: |
+          SELECTION="${{ inputs.policy_group }}"
+          REPO="${NGINX_REPO}"
+          CHART_REF="${CHART_REF}"
+
+          if [[ "${SELECTION}" == "All violations" ]]; then
+            echo "patch_file=" >> "$GITHUB_OUTPUT"
+            echo "Using base values file as-is (all policy groups)."
+          else
+            # Look up the matching policy entry in the manifest
+            IDX=$(yq e ".policies | to_entries | .[] | select(.value.displayName == \"${SELECTION}\") | .key" /tmp/manifest.yaml)
+
+            if [[ -z "${IDX}" ]]; then
+              echo "::error::No manifest entry found for '${SELECTION}'"
+              exit 1
+            fi
+
+            NAME=$(yq e ".policies[${IDX}].name"         /tmp/manifest.yaml)
+            PATH=$(yq e ".policies[${IDX}].path"         /tmp/manifest.yaml)
+            REF=$(yq e ".policies[${IDX}].ref"           /tmp/manifest.yaml)
+            RES=$(yq e ".policies[${IDX}].resourceName"  /tmp/manifest.yaml)
+            PREFIX=$(yq e ".policies[${IDX}].branchPrefix" /tmp/manifest.yaml)
+
+            echo "Generating VCS patch for: ${NAME} (${PATH})"
+
+            cat > /tmp/vcs-patch.yaml << EOF
+          remediator:
+            target:
+              vcs:
+                policies:
+                  - name: ${NAME}
+                    repo: ${REPO}
+                    path: ${PATH}
+                    ref: ${REF}
+                resources:
+                  - name: ${RES}
+                    repo: ${REPO}
+                    path: ./
+                    ref: ${CHART_REF}
+                    policyRefs:
+                      - ${NAME}
+          tool:
+            defaults:
+              git:
+                pullRequests:
+                  branchPrefix: ${PREFIX}
+          EOF
+
+            echo "Generated patch:"
+            cat /tmp/vcs-patch.yaml
+            echo "patch_file=/tmp/vcs-patch.yaml" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Install kind
         run: |
@@ -83,25 +160,6 @@ jobs:
             --from-literal=mapping='[]' \
             -n nirmata
 
-      - name: Select values file based on policy group
-        id: values
-        run: |
-          case "${{ inputs.policy_group }}" in
-            "Seccomp violations")
-              echo "file=remediator-helm-values-seccomp.yaml" >> "$GITHUB_OUTPUT"
-              echo "label=seccomp" >> "$GITHUB_OUTPUT"
-              ;;
-            "Resource limit violations")
-              echo "file=remediator-helm-values-resource-limits.yaml" >> "$GITHUB_OUTPUT"
-              echo "label=resource-limits" >> "$GITHUB_OUTPUT"
-              ;;
-            *)
-              echo "file=remediator-helm-values.yaml" >> "$GITHUB_OUTPUT"
-              echo "label=all" >> "$GITHUB_OUTPUT"
-              ;;
-          esac
-          echo "Using values file: $(cat $GITHUB_OUTPUT | grep file | cut -d= -f2)"
-
       - name: Clone kyverno-charts (remediator Helm chart)
         run: |
           git clone --depth=1 https://github.com/nirmata/kyverno-charts.git /tmp/kyverno-charts
@@ -109,9 +167,16 @@ jobs:
       - name: Install remediator agent
         run: |
           set -euo pipefail
+
+          EXTRA_VALUES=""
+          if [[ -n "${{ steps.patch.outputs.patch_file }}" ]]; then
+            EXTRA_VALUES="--values ${{ steps.patch.outputs.patch_file }}"
+          fi
+
           helm upgrade --install remediator-agent /tmp/kyverno-charts/charts/go-agent-remediator \
             --namespace nirmata \
-            --values ${{ steps.values.outputs.file }} \
+            --values remediator-helm-values.yaml \
+            ${EXTRA_VALUES} \
             --set image.repository=ghcr.io/nirmata/go-agent-remediator \
             --wait \
             --timeout 10m
@@ -201,10 +266,10 @@ jobs:
             echo ""
             echo "| | |"
             echo "|---|---|"
-            echo "| Cluster   | \`remediator-demo\` (kind) |"
-            echo "| Namespace | \`nirmata\` |"
-            echo "| Chart     | \`go-agent-remediator\` from nirmata/kyverno-charts |"
-            echo "| Values    | \`remediator-helm-values.yaml\` |"
+            echo "| Cluster      | \`remediator-demo\` (kind) |"
+            echo "| Namespace    | \`nirmata\` |"
+            echo "| Policy group | \`${{ inputs.policy_group }}\` |"
+            echo "| Chart        | \`go-agent-remediator\` from nirmata/kyverno-charts |"
             echo ""
           } >> "$GITHUB_STEP_SUMMARY"
 
@@ -212,17 +277,12 @@ jobs:
             {
               echo "### ✅ Remediator agent is running"
               echo ""
-              echo "The agent will:"
-              echo "1. Clone the policy and resource repositories defined in \`remediator-helm-values.yaml\`"
-              echo "2. Scan the Helm chart resources against the configured policies"
-              echo "3. Generate fixes and open a pull request in the target repository"
-              echo ""
-              echo "**Next step:** Check the [Pull Requests](https://github.com/${{ github.repository }}/pulls) tab for the remediation PR created by the agent."
+              echo "**Next step:** Check the [Pull Requests](https://github.com/${{ github.repository }}/pulls) tab for the remediation PR."
             } >> "$GITHUB_STEP_SUMMARY"
           else
             {
               echo "### ❌ Deployment did not complete successfully"
               echo ""
-              echo "Check the **Install remediator agent** and **Verify deployment** step logs for details."
+              echo "Check the **Install remediator agent** step logs for details."
             } >> "$GITHUB_STEP_SUMMARY"
           fi
