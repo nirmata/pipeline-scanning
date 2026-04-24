@@ -1,0 +1,161 @@
+# Scans the Helm chart on remediation-helm-chart branch against PSS policies.
+# Fails the pipeline if violations are found and shows per-violation remediate buttons.
+#
+# Required secrets: none (policy sets are built-in)
+# Optional: run manually via workflow_dispatch
+
+name: Helm Policy Scan
+
+on:
+  push:
+    branches: [remediation-helm-chart]
+  workflow_dispatch:
+
+concurrency:
+  group: helm-scan-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  CHART_PATH: charts/my-nginx-chart
+  #CHART_PATH: charts/my-nginx-chart
+  POLICY_SETS: pss-baseline,pss-restricted
+  REMEDIATION_WORKFLOW_URL: https://github.com/${{ github.repository }}/actions/workflows/install-remediator.yml
+
+jobs:
+  scan:
+    name: Scan Helm chart for policy violations
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Helm
+        run: |
+          curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+          helm version
+
+      - name: Install nctl
+        run: |
+          set -euo pipefail
+          curl -fsSL https://downloads.nirmata.io/nctl/install.sh | bash
+          echo "$(dirname "$(command -v nctl)")" >> "${GITHUB_PATH}"
+          nctl version
+
+      - name: Scan Helm chart
+        id: scan
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          git clone https://github.com/nsagark/nginx.git
+          cd nginx && git checkout exceptions-in-pipelines && cd ..
+          nctl scan helm -r "${CHART_PATH}" -p "nginx/policies" -o json | tee report.json
+
+      - name: Parse violations
+        id: parse
+        if: always() && hashFiles('report.json') != ''
+        run: |
+          set -euo pipefail
+
+          jq -r '
+            .policies // [] |
+            map(. as $pol |
+              (.namespaceScopedResources // []) |
+              map(.resources // [] | .[]) | flatten |
+              map(. as $res |
+                (.rules // []) |
+                map(select(.Status == "fail")) |
+                map({
+                  resource: $res.name,
+                  policy:   $pol.name,
+                  rule:     .Name,
+                  severity: .Severity,
+                  message:  .Message
+                })
+              ) | flatten
+            ) | flatten | .[]
+          ' report.json > violations.json 2>/dev/null || echo '[]' > violations.json
+
+          COUNT=$(jq -s 'length' violations.json 2>/dev/null || echo 0)
+          echo "violations_count=${COUNT}" >> "$GITHUB_OUTPUT"
+          if [[ "${COUNT}" -gt 0 ]]; then
+            echo "violations_found=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "violations_found=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Write job summary
+        if: always()
+        run: |
+          WORKFLOW_URL="https://github.com/${{ github.repository }}/actions/workflows/install-remediator.yml"
+
+          {
+            echo "## Helm Policy Scan"
+            echo ""
+            echo "| | |"
+            echo "|---|---|"
+            echo "| Branch | \`${{ github.ref_name }}\` |"
+            echo "| Chart  | \`${CHART_PATH}\` |"
+            echo "| Policy sets | \`${POLICY_SETS}\` |"
+            echo "| Commit | \`${{ github.sha }}\` |"
+            echo ""
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          if [[ "${{ steps.parse.outputs.violations_found }}" == "true" ]]; then
+            {
+              echo "### ❌ ${{ steps.parse.outputs.violations_count }} violation(s) detected"
+              echo ""
+              echo "Choose which violations to remediate. Each button opens the remediation workflow — select the matching option from the **Policy group** dropdown and click **Run workflow**."
+              echo ""
+              echo "| Violation | Policy | Rule | Severity | Remediate |"
+              echo "|---|---|---|---|---|"
+            } >> "$GITHUB_STEP_SUMMARY"
+
+            jq -r '.resource + "\t" + .policy + "\t" + .rule + "\t" + .severity' \
+              violations.json 2>/dev/null | \
+              while IFS=$'\t' read -r res pol rule sev; do
+                res="$(echo "$res" | xargs)"
+                pol="$(echo "$pol" | xargs)"
+                rule="$(echo "$rule" | xargs)"
+                sev="$(echo "$sev" | xargs)"
+
+                # Map policy name to the dropdown choice in install-remediator.yml
+                case "${pol}" in
+                  *seccomp*)   label="Seccomp violations" ;;
+                  *resource*|*limit*|*request*) label="Resource limit violations" ;;
+                  *)           label="All violations" ;;
+                esac
+
+                echo "| \`${res}\` | \`${pol}\` | \`${rule}\` | ${sev} | [▶ Fix — select **\"${label}\"**](${WORKFLOW_URL}) |" \
+                  >> "$GITHUB_STEP_SUMMARY"
+              done
+
+            {
+              echo ""
+              echo "---"
+              echo "### How to remediate"
+              echo ""
+              echo "1. Click a **▶ Fix** button above"
+              echo "2. Click **Run workflow** (top-right)"
+              echo "3. Select the **Policy group** that matches the violation"
+              echo "4. Click **Run workflow** — the agent will create a PR with the fix"
+              echo ""
+              echo "| Policy group option | Fixes |"
+              echo "|---|---|"
+              echo "| **Seccomp violations** | \`restrict-seccomp-strict\` — adds \`seccompProfile: RuntimeDefault\` |"
+              echo "| **Resource limit violations** | \`require-requests-limits\` — adds CPU/memory requests and limits |"
+              echo "| **All violations** | Fixes both in separate PRs |"
+            } >> "$GITHUB_STEP_SUMMARY"
+
+          else
+            echo "### ✅ No violations found — chart is compliant" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Fail pipeline on violations
+        if: steps.parse.outputs.violations_found == 'true'
+        run: |
+          echo "::error::Helm policy scan failed: ${{ steps.parse.outputs.violations_count }} violation(s) found in ${CHART_PATH}. See job summary for remediation options."
+          exit 1
