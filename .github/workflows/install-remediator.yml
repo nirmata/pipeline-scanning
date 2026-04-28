@@ -7,7 +7,7 @@
 #   NIRMATA_SERVICE_ACCOUNT_TOKEN — Nirmata service account token
 #   PAT                           — GitHub Personal Access Token (for CreatePR action)
 #
-# Policy groups are defined in policies/manifest.yaml on the exceptions-in-pipelines branch.
+# Policy groups are defined in policies/manifest.yaml on the kyverno-policies branch.
 # To add a new policy: add the policy file, update manifest.yaml, add an option to the
 # policy_group dropdown below — no values files to create or maintain.
 
@@ -31,8 +31,8 @@ permissions:
 
 env:
   NGINX_REPO: https://github.com/nsagark/nginx
-  CHART_REF: remediation-helm-chart
-  POLICIES_BRANCH: exceptions-in-pipelines
+  CHART_REF: helm-app
+  POLICIES_BRANCH: kyverno-policies
 
 jobs:
   install-remediator:
@@ -41,10 +41,10 @@ jobs:
     timeout-minutes: 30
 
     steps:
-      - name: Checkout remediation-helm-chart branch
+      - name: Checkout helm-app branch
         uses: actions/checkout@v4
         with:
-          ref: remediation-helm-chart
+          ref: helm-app
 
       - name: Install yq
         run: |
@@ -53,10 +53,10 @@ jobs:
           sudo chmod +x /usr/local/bin/yq
           yq --version
 
-      - name: Fetch policy manifest from exceptions-in-pipelines
+      - name: Fetch policy manifest from kyverno-policies
         run: |
-          git fetch origin exceptions-in-pipelines
-          git show origin/exceptions-in-pipelines:policies/manifest.yaml > /tmp/manifest.yaml
+          git fetch origin kyverno-policies
+          git show origin/kyverno-policies:policies/manifest.yaml > /tmp/manifest.yaml
           echo "Loaded manifest:"
           cat /tmp/manifest.yaml
 

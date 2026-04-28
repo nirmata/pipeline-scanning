@@ -8,8 +8,8 @@ This branch demonstrates an automated policy enforcement pipeline for a Helm cha
 
 | Branch | Contents |
 |---|---|
-| `remediation-helm-chart` | Helm chart, workflow files, remediator values |
-| `exceptions-in-pipelines` | Custom Kyverno policies, `policies/manifest.yaml` |
+| `helm-app` | Helm chart, workflow files, remediator values |
+| `kyverno-policies` | Custom Kyverno policies, `policies/manifest.yaml` |
 
 **Key files on this branch:**
 
@@ -21,7 +21,7 @@ remediator-helm-values.yaml     # Base Helm values for the remediator agent
   install-remediator.yml        # Manually triggered — deploys the remediator and opens fix PRs
 ```
 
-**Key files on `exceptions-in-pipelines`:**
+**Key files on `kyverno-policies`:**
 
 ```
 policies/
@@ -50,7 +50,7 @@ Configure these under **Settings → Secrets and variables → Actions**:
 ## Workflow 1 — Helm Policy Scan
 
 **File:** `.github/workflows/helm-policy-scan.yml`
-**Triggers:** Push to `remediation-helm-chart`, or manual `workflow_dispatch`
+**Triggers:** Push to `helm-app`, or manual `workflow_dispatch`
 
 ### What it does
 
@@ -89,7 +89,7 @@ Below the table, the summary explains both options and maps each policy group to
 
 ### What it does
 
-1. **Reads `policies/manifest.yaml`** from the `exceptions-in-pipelines` branch to look up policy metadata for the selected group.
+1. **Reads `policies/manifest.yaml`** from the `kyverno-policies` branch to look up policy metadata for the selected group.
 2. **Spins up a temporary [kind](https://kind.sigs.k8s.io/) Kubernetes cluster** on the GitHub Actions runner.
 3. **Deploys the Nirmata remediator agent** (`go-agent-remediator` Helm chart from `nirmata/kyverno-charts`) using `remediator-helm-values.yaml` as the base config. For a specific policy group, a generated patch overrides the VCS target to scope the agent to that policy only.
 4. **Bounces the agent** immediately after startup (scale down → delete RemediationRecords → scale up) to trigger an immediate remediation cycle instead of waiting for the cron schedule.
@@ -110,7 +110,7 @@ Below the table, the summary explains both options and maps each policy group to
 ## End-to-End Flow
 
 ```
-Push to remediation-helm-chart
+Push to helm-app
         │
         ▼
 ┌─────────────────────┐
@@ -138,7 +138,7 @@ Push to remediation-helm-chart
 
 ## Adding a New Policy
 
-1. Add the Kyverno policy YAML under `policies/<new-dir>/` on the `exceptions-in-pipelines` branch.
+1. Add the Kyverno policy YAML under `policies/<new-dir>/` on the `kyverno-policies` branch.
 2. Add an entry to `policies/manifest.yaml` with `name`, `displayName`, `path`, `ref`, `resourceName`, and `branchPrefix`.
 3. Add the new `displayName` as a `choice` option in the `policy_group` dropdown in `install-remediator.yml`.
 4. Add a `-p "nginx/policies/<new-dir>"` flag to the scan step in `helm-policy-scan.yml`.

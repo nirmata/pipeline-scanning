@@ -203,22 +203,22 @@ remediator:
         - name: seccomp-policy
           repo: https://github.com/nsagark/nginx
           path: policies/seccomp
-          ref: exceptions-in-pipelines
+          ref: kyverno-policies
         - name: resource-limits-policy
           repo: https://github.com/nsagark/nginx
           path: policies/resource-limits
-          ref: exceptions-in-pipelines
+          ref: kyverno-policies
       resources:
         - name: nginx-seccomp-fix
           repo: https://github.com/nsagark/nginx
           path: ./
-          ref: remediation-helm-chart
+          ref: helm-app
           policyRefs:
             - seccomp-policy
         - name: nginx-resource-limits-fix
           repo: https://github.com/nsagark/nginx
           path: ./
-          ref: remediation-helm-chart
+          ref: helm-app
           policyRefs:
             - resource-limits-policy
   remediation:
