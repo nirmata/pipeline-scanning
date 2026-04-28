@@ -178,7 +178,7 @@ jobs:
               echo "|---|---|"
               echo "| **Seccomp violations** | \`restrict-seccomp-strict\` — adds \`seccompProfile: RuntimeDefault\` |"
               echo "| **Resource limit violations** | \`require-requests-limits\` — adds CPU/memory requests and limits |"
-              echo "| **All violations** | Fixes both in separate PRs |"
+              echo "| **All violations** | Fixes both in a single PR |"
               echo ""
               echo "#### Option 2 — Policy exception (via NCH)"
               echo "1. Click **🔒 Exception** for the violation you want to exempt"
