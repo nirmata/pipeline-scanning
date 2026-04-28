@@ -219,12 +219,8 @@ jobs:
 
       - name: Tail agent logs until PR(s) created (max 8 minutes)
         run: |
-          # "All violations" creates one PR per resource entry (2 total)
-          if [[ "${{ inputs.policy_group }}" == "All violations" ]]; then
-            EXPECTED_PRS=2
-          else
-            EXPECTED_PRS=1
-          fi
+          # All policy groups produce one PR (single resource entry with all policyRefs)
+          EXPECTED_PRS=1
           echo "Waiting for ${EXPECTED_PRS} PR(s) to be created..."
 
           POD=$(kubectl get pod -n nirmata -l app.kubernetes.io/instance=remediator-agent \

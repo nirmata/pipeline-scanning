@@ -209,17 +209,12 @@ remediator:
           path: policies/resource-limits
           ref: kyverno-policies
       resources:
-        - name: nginx-seccomp-fix
+        - name: nginx-all-fixes
           repo: https://github.com/nirmata/pipeline-scanning
           path: ./
           ref: helm-app
           policyRefs:
             - seccomp-policy
-        - name: nginx-resource-limits-fix
-          repo: https://github.com/nirmata/pipeline-scanning
-          path: ./
-          ref: helm-app
-          policyRefs:
             - resource-limits-policy
   remediation:
     schedule: "*/5 * * * *"
