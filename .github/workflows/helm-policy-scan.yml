@@ -23,7 +23,7 @@ permissions:
 
 env:
   CHART_PATH: charts/my-nginx-chart
-  POLICIES_REPO: https://github.com/nsagark/nginx
+  POLICIES_REPO: https://github.com/nirmata/pipeline-scanning
   POLICIES_BRANCH: kyverno-policies
   POLICIES_PATH: policies
   NIRMATA_URL: ${{ vars.NIRMATA_URL }}
@@ -55,11 +55,11 @@ jobs:
         continue-on-error: true
         run: |
           set -euo pipefail
-          git clone https://github.com/nsagark/nginx.git
-          cd nginx && git checkout kyverno-policies && cd ..
+          git clone https://github.com/nirmata/pipeline-scanning.git pipeline-scanning
+          cd pipeline-scanning && git checkout kyverno-policies && cd ..
           nctl scan helm -r "${CHART_PATH}" \
-            -p "nginx/policies/seccomp" \
-            -p "nginx/policies/resource-limits" \
+            -p "pipeline-scanning/policies/seccomp" \
+            -p "pipeline-scanning/policies/resource-limits" \
             -o json \
             | tee report.json
 
@@ -73,7 +73,7 @@ jobs:
             exit 0
           fi
           nctl scan repository \
-            --policies="nginx/policies" \
+            --policies="pipeline-scanning/policies" \
             --url "${NIRMATA_URL}" \
             --token "${{ secrets.NIRMATA_TEAM_TOKEN }}" \
             --publish

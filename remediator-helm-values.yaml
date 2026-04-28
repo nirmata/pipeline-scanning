@@ -201,22 +201,22 @@ remediator:
     vcs:
       policies:
         - name: seccomp-policy
-          repo: https://github.com/nsagark/nginx
+          repo: https://github.com/nirmata/pipeline-scanning
           path: policies/seccomp
           ref: kyverno-policies
         - name: resource-limits-policy
-          repo: https://github.com/nsagark/nginx
+          repo: https://github.com/nirmata/pipeline-scanning
           path: policies/resource-limits
           ref: kyverno-policies
       resources:
         - name: nginx-seccomp-fix
-          repo: https://github.com/nsagark/nginx
+          repo: https://github.com/nirmata/pipeline-scanning
           path: ./
           ref: helm-app
           policyRefs:
             - seccomp-policy
         - name: nginx-resource-limits-fix
-          repo: https://github.com/nsagark/nginx
+          repo: https://github.com/nirmata/pipeline-scanning
           path: ./
           ref: helm-app
           policyRefs:
