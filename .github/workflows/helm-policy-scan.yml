@@ -58,8 +58,17 @@ jobs:
           git clone https://github.com/nsagark/nginx.git
           cd nginx && git checkout exceptions-in-pipelines && cd ..
           nctl scan helm -r "${CHART_PATH}" -p "nginx/policies" -o json \
-            --publish --url "${NIRMATA_URL}" --token "${{ secrets.NIRMATA_TEAM_TOKEN }}" \
             | tee report.json
+
+      - name: Publish scan results to NCH
+        if: always()
+        continue-on-error: true
+        run: |
+          nctl scan repository \
+            --policies="https://github.com/nsagark/nginx/tree/exceptions-in-pipelines/only-policies" \
+            --url "${NIRMATA_URL}" \
+            --token "${{ secrets.NIRMATA_TEAM_TOKEN }}" \
+            --publish
 
       - name: Parse violations
         id: parse
