@@ -23,7 +23,7 @@ permissions:
 
 env:
   CHART_PATH: charts/my-nginx-chart
-  POLICIES_REPO: https://github.com/nsagark/nginx
+  POLICIES_REPO: https://github.com/nirmata/pipeline-scanning
   POLICIES_BRANCH: kyverno-policies
   POLICIES_PATH: policies
   NIRMATA_URL: ${{ vars.NIRMATA_URL }}
@@ -55,7 +55,7 @@ jobs:
         continue-on-error: true
         run: |
           set -euo pipefail
-          git clone https://github.com/nsagark/nginx.git
+          git clone https://github.com/nirmata/pipeline-scanning.git pipeline-scanning
           cd pipeline-scanning && git checkout kyverno-policies && cd ..
           nctl scan helm -r "${CHART_PATH}" \
             -p "pipeline-scanning/policies/seccomp" \
