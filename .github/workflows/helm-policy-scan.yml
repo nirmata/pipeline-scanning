@@ -56,10 +56,10 @@ jobs:
         run: |
           set -euo pipefail
           git clone https://github.com/nsagark/nginx.git
-          cd nginx && git checkout kyverno-policies && cd ..
+          cd pipeline-scanning && git checkout kyverno-policies && cd ..
           nctl scan helm -r "${CHART_PATH}" \
-            -p "nginx/policies/seccomp" \
-            -p "nginx/policies/resource-limits" \
+            -p "pipeline-scanning/policies/seccomp" \
+            -p "pipeline-scanning/policies/resource-limits" \
             -o json \
             | tee report.json
 
@@ -73,7 +73,7 @@ jobs:
             exit 0
           fi
           nctl scan repository \
-            --policies="nginx/policies" \
+            --policies="pipeline-scanning/policies" \
             --url "${NIRMATA_URL}" \
             --token "${{ secrets.NIRMATA_TEAM_TOKEN }}" \
             --publish
