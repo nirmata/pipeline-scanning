@@ -30,7 +30,7 @@ permissions:
   contents: read
 
 env:
-  NGINX_REPO: https://github.com/nsagark/nginx
+  NGINX_REPO: https://github.com/nirmata/pipeline-scanning
   CHART_REF: helm-app
   POLICIES_BRANCH: kyverno-policies
 
