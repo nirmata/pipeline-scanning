@@ -40,10 +40,14 @@ podLabels: {}
 
 podSecurityContext:
   runAsNonRoot: false
+  seccompProfile:
+    type: RuntimeDefault
   # fsGroup: 2000
 
 securityContext:
   allowPrivilegeEscalation: true
+  seccompProfile:
+    type: RuntimeDefault
   # capabilities:
   #   drop:
   #   - ALL
