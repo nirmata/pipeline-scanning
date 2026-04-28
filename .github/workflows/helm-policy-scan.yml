@@ -55,8 +55,8 @@ jobs:
         continue-on-error: true
         run: |
           set -euo pipefail
-          git clone https://github.com/nsagark/nginx.git
-          cd nginx && git checkout exceptions-in-pipelines && cd ..
+          # git clone https://github.com/nsagark/nginx.git
+          # cd nginx && git checkout exceptions-in-pipelines && cd ..
           # nctl scan helm -r "${CHART_PATH}" -p "nginx/policies" -o json \
             --publish --url "${NIRMATA_URL}" --token "${{ secrets.NIRMATA_TEAM_TOKEN }}" \
             | tee report.json
