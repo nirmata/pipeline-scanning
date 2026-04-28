@@ -57,7 +57,10 @@ jobs:
           set -euo pipefail
           git clone https://github.com/nsagark/nginx.git
           cd nginx && git checkout exceptions-in-pipelines && cd ..
-          nctl scan helm -r "${CHART_PATH}" -p "nginx/policies" -o json \
+          nctl scan helm -r "${CHART_PATH}" \
+            -p "nginx/policies/seccomp" \
+            -p "nginx/policies/resource-limits" \
+            -o json \
             | tee report.json
 
       - name: Publish scan results to NCH
