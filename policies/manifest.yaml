@@ -2,13 +2,13 @@ policies:
   - name: seccomp-policy
     displayName: "Seccomp violations"
     path: policies/seccomp
-    ref: exceptions-in-pipelines
+    ref: kyverno-policies
     resourceName: nginx-seccomp-fix
     branchPrefix: remediation-seccomp-
 
   - name: resource-limits-policy
     displayName: "Resource limit violations"
     path: policies/resource-limits
-    ref: exceptions-in-pipelines
+    ref: kyverno-policies
     resourceName: nginx-resource-limits-fix
     branchPrefix: remediation-resource-limits-
