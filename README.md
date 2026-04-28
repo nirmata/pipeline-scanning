@@ -1,68 +1,145 @@
-# Helm Policy Scan & Exception Automation
+# Helm Chart Policy Enforcement with Nirmata
 
-Automatically scans your Helm chart for Kyverno policy violations and lets you generate **PolicyException YAMLs** or **remediated resource YAMLs** from the GitHub Actions UI — no local tooling needed.
-
----
-
-## What It Does
-
-1. **Scans** your Helm chart against the `pss-baseline` and `pss-restricted` Kyverno policy sets on every push to this branch.
-2. **Shows** which pod controllers are violating policies and exactly which policies failed.
-3. **Lets you choose** — via a simple GitHub UI form — whether to generate a PolicyException or a remediated resource YAML for any violating resource.
+This branch demonstrates an automated policy enforcement pipeline for a Helm chart using Nirmata's tooling. When a policy violation is detected, the developer can either **auto-fix it via a PR** or **request a policy exception through NCH** — all from the GitHub Actions job summary, without any local tooling.
 
 ---
 
-## Prerequisites
+## Repository Structure
 
-Add these under **Settings → Secrets and variables → Actions**:
+| Branch | Contents |
+|---|---|
+| `remediation-helm-chart` | Helm chart, workflow files, remediator values |
+| `exceptions-in-pipelines` | Custom Kyverno policies, `policies/manifest.yaml` |
+
+**Key files on this branch:**
+
+```
+charts/my-nginx-chart/          # Helm chart being scanned
+remediator-helm-values.yaml     # Base Helm values for the remediator agent
+.github/workflows/
+  helm-policy-scan.yml          # Scans the chart on every push, publishes to NCH
+  install-remediator.yml        # Manually triggered — deploys the remediator and opens fix PRs
+```
+
+**Key files on `exceptions-in-pipelines`:**
+
+```
+policies/
+  manifest.yaml                 # Policy metadata registry (used by the remediator)
+  seccomp/
+    restrict-seccomp-strict.yaml
+  resource-limits/
+    require_pod_requests_limits.yaml
+```
+
+---
+
+## Secrets and Variables
+
+Configure these under **Settings → Secrets and variables → Actions**:
 
 | Name | Type | Description |
 |---|---|---|
-| `NIRMATA_URL` | Secret | Your Nirmata instance URL, e.g. `https://www.nirmata.io` |
-| `NIRMATA_TOKEN` | Secret | Nirmata API token |
-| `NIRMATA_USERID` | Secret | *(optional)* User email, if your nctl version requires login |
-| `HELM_CHART_PATH` | Variable | *(optional)* Path to the folder containing `Chart.yaml`. Defaults to `.` (repo root). Example: `charts/myapp` |
+| `NIRMATA_TEAM_TOKEN` | Secret | Nirmata team token — used by `nctl` to publish scan results to NCH |
+| `NIRMATA_SERVICE_ACCOUNT_TOKEN` | Secret | Nirmata service account token — used by the remediator agent |
+| `PAT` | Secret | GitHub Personal Access Token with `repo` and `workflow` scopes — used by the remediator to open PRs |
+| `NIRMATA_URL` | **Variable** | NCH base URL, e.g. `https://nirmata.io` — must be a variable (not a secret) so it renders correctly in job summary links |
 
 ---
 
-## How to Use
+## Workflow 1 — Helm Policy Scan
 
-### Step 1 — Push to trigger the scan
+**File:** `.github/workflows/helm-policy-scan.yml`
+**Triggers:** Push to `remediation-helm-chart`, or manual `workflow_dispatch`
 
-Push any change to the `exceptions-in-pipelines` branch. The scan runs automatically.
+### What it does
 
-### Step 2 — Review the scan summary
+1. **Scans** `charts/my-nginx-chart` against the two custom Kyverno policies using `nctl scan helm`:
+   - `policies/seccomp/restrict-seccomp-strict.yaml` — requires `seccompProfile: RuntimeDefault`
+   - `policies/resource-limits/require_pod_requests_limits.yaml` — requires CPU/memory requests and limits
+2. **Publishes** results to NCH using `nctl scan repository --publish` so violations appear in the NCH policy report.
+3. **Writes a job summary** listing every violation with two action buttons:
+   - **▶ Fix** — opens the Install Remediator Agent workflow to auto-fix the violation via a PR
+   - **🔒 Exception** — links to the NCH policy report page where you can log in and submit a policy exception request
+4. **Fails the pipeline** if any violations are found.
 
-Go to **Actions → nctl Helm policy scan → [latest run] → Summary**.
+### Job summary example
 
-The summary shows:
-- Which pod controllers have violations
-- A table of failing policies and rules per resource
-- A ready-to-copy policy list for each resource
+When violations are detected the summary shows:
 
-### Step 3 — Generate exceptions or remediate
+| Violation | Policy | Rule | Severity | Actions |
+|---|---|---|---|---|
+| `my-nginx-chart` | `seccomp-policy` | `check-seccomp` | medium | ▶ Fix · 🔒 Exception |
+| `my-nginx-chart` | `resource-limits-policy` | `check-limits` | medium | ▶ Fix · 🔒 Exception |
 
-1. Go to **Actions → nctl Helm — process resources**
-2. Click **Run workflow** (Branch: `main`)
-3. Fill in the form:
+Below the table, the summary explains both options and maps each policy group to the correct remediator dropdown value.
 
-   | Field | What to enter |
-   |---|---|
-   | `selected_resources` | Copy the resource name from the scan summary, e.g. `Deployment/release-name-my-nginx-chart` |
-   | `action` | `generate-exception` or `remediate` |
-   | `selected_policies` | *(optional)* Paste the policy list from the scan summary to scope to specific violations. Leave blank to cover all. |
+---
 
-4. Click **Run workflow**
+## Workflow 2 — Install Remediator Agent
 
-### Step 4 — Download the results
+**File:** `.github/workflows/install-remediator.yml`
+**Triggers:** Manual only (`workflow_dispatch`) — typically launched by clicking **▶ Fix** in the scan job summary
 
-Once the run completes, download from the **Artifacts** section:
+### Inputs
 
-| Action chosen | Artifact name | Contents |
+| Input | Options |
+|---|---|
+| `policy_group` | `All violations` / `Seccomp violations` / `Resource limit violations` |
+
+### What it does
+
+1. **Reads `policies/manifest.yaml`** from the `exceptions-in-pipelines` branch to look up policy metadata for the selected group.
+2. **Spins up a temporary [kind](https://kind.sigs.k8s.io/) Kubernetes cluster** on the GitHub Actions runner.
+3. **Deploys the Nirmata remediator agent** (`go-agent-remediator` Helm chart from `nirmata/kyverno-charts`) using `remediator-helm-values.yaml` as the base config. For a specific policy group, a generated patch overrides the VCS target to scope the agent to that policy only.
+4. **Bounces the agent** immediately after startup (scale down → delete RemediationRecords → scale up) to trigger an immediate remediation cycle instead of waiting for the cron schedule.
+5. **Tails the agent logs** until all expected PRs are created or 8 minutes elapse:
+   - `All violations` → waits for **2 PRs** (one per policy group, on separate branches)
+   - Specific group → waits for **1 PR**
+
+### PRs opened by the agent
+
+| Policy group | PR branch prefix | What the PR fixes |
 |---|---|---|
-| `generate-exception` | `policyexceptions-<run-id>` | Kyverno `PolicyException` YAML(s), scoped to the violations you selected, with `namespace: kyverno` |
-| `remediate` | `remediated-yamls-<run-id>` | Full Kubernetes resource YAML(s) with only the non-compliant fields corrected |
+| Seccomp violations | `remediation-seccomp-` | Adds `seccompProfile: RuntimeDefault` to all pod specs |
+| Resource limit violations | `remediation-resource-limits-` | Adds CPU/memory `requests` and `limits` to all containers |
+| All violations | both prefixes | Opens one PR per policy group |
 
 ---
 
-For a detailed explanation of how the workflows work internally, see [howitworks.md](howitworks.md).
+## End-to-End Flow
+
+```
+Push to remediation-helm-chart
+        │
+        ▼
+┌─────────────────────┐
+│  Helm Policy Scan   │──── no violations ────► pipeline passes
+│  (automatic)        │
+└─────────────────────┘
+        │ violations found → pipeline fails
+        │
+        │  Job summary shows per-violation buttons
+        │
+        ├── click ▶ Fix ──────────────────────────────────────────────┐
+        │                                                              ▼
+        │                                             ┌───────────────────────────┐
+        │                                             │  Install Remediator Agent │
+        │                                             │  (manual, workflow_dispatch)│
+        │                                             │  → kind cluster           │
+        │                                             │  → remediator agent       │
+        │                                             │  → PR(s) opened with fix  │
+        │                                             └───────────────────────────┘
+        │
+        └── click 🔒 Exception ──► NCH policy report ──► submit exception request
+```
+
+---
+
+## Adding a New Policy
+
+1. Add the Kyverno policy YAML under `policies/<new-dir>/` on the `exceptions-in-pipelines` branch.
+2. Add an entry to `policies/manifest.yaml` with `name`, `displayName`, `path`, `ref`, `resourceName`, and `branchPrefix`.
+3. Add the new `displayName` as a `choice` option in the `policy_group` dropdown in `install-remediator.yml`.
+4. Add a `-p "nginx/policies/<new-dir>"` flag to the scan step in `helm-policy-scan.yml`.
+5. Add a `case` entry in the job summary section of `helm-policy-scan.yml` to map the policy name to the correct dropdown label.
