@@ -65,7 +65,7 @@ jobs:
         continue-on-error: true
         run: |
           nctl scan repository \
-            --policies="https://github.com/nsagark/nginx/tree/exceptions-in-pipelines/only-policies" \
+            --policies="nginx/policies" \
             --url "${NIRMATA_URL}" \
             --token "${{ secrets.NIRMATA_TEAM_TOKEN }}" \
             --publish
