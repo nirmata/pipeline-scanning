@@ -63,7 +63,12 @@ jobs:
       - name: Publish scan results to NCH
         if: always()
         continue-on-error: true
+        timeout-minutes: 5
         run: |
+          if [[ -z "${NIRMATA_URL}" ]]; then
+            echo "NIRMATA_URL variable is not set — skipping NCH publish."
+            exit 0
+          fi
           nctl scan repository \
             --policies="nginx/policies" \
             --url "${NIRMATA_URL}" \
