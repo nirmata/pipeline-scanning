@@ -132,6 +132,7 @@ jobs:
           REPO_URL="https://github.com/${{ github.repository }}"
           ENCODED_REPO=$(python3 -c "import urllib.parse; print(urllib.parse.quote('${REPO_URL}', safe=''))")
           NCH_EXCEPTION_URL="${NIRMATA_URL}/webclient/#policy-reports/repositories/${ENCODED_REPO}/findings"
+          NCH_LOGIN_URL="${NIRMATA_URL}/security/"
 
           if [[ "${{ steps.parse.outputs.violations_found }}" == "true" ]]; then
             {
@@ -139,7 +140,7 @@ jobs:
               echo ""
               echo "For each violation, choose an action:"
               echo "- **🛠️ Fix a violation** — triggers the remediator agent to open a PR with an automated fix"
-              echo "- **📋 File an Exception** — opens the NCH findings page where you can submit a policy exception request"
+              echo "- **📋 File an Exception** — opens the NCH findings page for this repository (must be [logged in to NCH](${NCH_LOGIN_URL}) first)"
               echo ""
               echo "| Violation | Policy | Rule | Severity | Actions |"
               echo "|---|---|---|---|---|"
@@ -182,8 +183,8 @@ jobs:
               echo "| **All violations** | Fixes both in a single PR |"
               echo ""
               echo "#### Option 2 — 📋 File an Exception (via NCH)"
-              echo "1. Click **📋 File an Exception** for the violation you want to exempt"
-              echo "2. Log in to NCH when prompted — you will land directly on the findings page for this repository"
+              echo "1. [Log in to NCH](${NCH_LOGIN_URL}) first if you are not already logged in"
+              echo "2. Click **📋 File an Exception** — you will land directly on the findings page for this repository"
               echo "3. Select the violation and submit an exception request"
               echo "4. Once approved, the exception will be applied and future scans will pass"
             } >> "$GITHUB_STEP_SUMMARY"
