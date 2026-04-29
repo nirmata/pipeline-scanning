@@ -128,10 +128,19 @@ jobs:
             echo ""
           } >> "$GITHUB_STEP_SUMMARY"
 
-          # Build the NCH findings URL for this repository (works for any repo name)
+          # Build the NCH findings URL for this repository (works for any repo name).
+          # For nirmata.io (cloud SaaS), the webclient is served from www.nirmata.io.
+          # A server-side redirect from nirmata.io/webclient/ → www.nirmata.io/webclient/
+          # drops the hash fragment, so we link directly to www.nirmata.io to avoid it.
+          # Enterprise installs use NIRMATA_URL as-is (no www. redirect).
           REPO_URL="https://github.com/${{ github.repository }}"
           ENCODED_REPO=$(python3 -c "import urllib.parse; print(urllib.parse.quote('${REPO_URL}', safe=''))")
-          NCH_EXCEPTION_URL="${NIRMATA_URL}/webclient/#policy-reports/repositories/${ENCODED_REPO}/findings"
+          if [[ "${NIRMATA_URL}" =~ ://nirmata\.io(/|$) ]]; then
+            WEBCLIENT_BASE="https://www.nirmata.io"
+          else
+            WEBCLIENT_BASE="${NIRMATA_URL}"
+          fi
+          NCH_EXCEPTION_URL="${WEBCLIENT_BASE}/webclient/#policy-reports/repositories/${ENCODED_REPO}/findings"
           NCH_LOGIN_URL="${NIRMATA_URL}/security/"
 
           if [[ "${{ steps.parse.outputs.violations_found }}" == "true" ]]; then
