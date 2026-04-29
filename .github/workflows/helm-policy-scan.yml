@@ -128,17 +128,18 @@ jobs:
             echo ""
           } >> "$GITHUB_STEP_SUMMARY"
 
-          # Build the NCH exception URL for this repository
-          ENCODED_REPO=$(python3 -c "import urllib.parse; print(urllib.parse.quote('${POLICIES_REPO}', safe=''))")
-          NCH_EXCEPTION_URL="${NIRMATA_URL}/webclient/#clusters/policyReport/repositoryDetails?repo=${ENCODED_REPO}&backurl=clustersPolicyReport%2Frepositories&filter.status.value=fail"
+          # Build the NCH findings URL for this repository (works for any repo name)
+          REPO_URL="https://github.com/${{ github.repository }}"
+          ENCODED_REPO=$(python3 -c "import urllib.parse; print(urllib.parse.quote('${REPO_URL}', safe=''))")
+          NCH_EXCEPTION_URL="${NIRMATA_URL}/webclient/#policy-reports/repositories/${ENCODED_REPO}/findings"
 
           if [[ "${{ steps.parse.outputs.violations_found }}" == "true" ]]; then
             {
               echo "### ❌ ${{ steps.parse.outputs.violations_count }} violation(s) detected"
               echo ""
               echo "For each violation, choose an action:"
-              echo "- **▶ Fix** — triggers the remediator agent to open a PR with an automated fix"
-              echo "- **🔒 Exception** — opens NCH where you can log in and request a policy exception"
+              echo "- **🛠️ Fix a violation** — triggers the remediator agent to open a PR with an automated fix"
+              echo "- **📋 File an Exception** — opens the NCH findings page where you can submit a policy exception request"
               echo ""
               echo "| Violation | Policy | Rule | Severity | Actions |"
               echo "|---|---|---|---|---|"
@@ -159,7 +160,7 @@ jobs:
                   *)           label="All violations" ;;
                 esac
 
-                echo "| \`${res}\` | \`${pol}\` | \`${rule}\` | ${sev} | [▶ Fix](${WORKFLOW_URL}) · [🔒 Exception](${NCH_EXCEPTION_URL}) |" \
+                echo "| \`${res}\` | \`${pol}\` | \`${rule}\` | ${sev} | [🛠️ Fix a violation](${WORKFLOW_URL}) &nbsp;**OR**&nbsp; [📋 File an Exception](${NCH_EXCEPTION_URL}) |" \
                   >> "$GITHUB_STEP_SUMMARY"
               done
 
@@ -168,8 +169,8 @@ jobs:
               echo "---"
               echo "### How to act on a violation"
               echo ""
-              echo "#### Option 1 — Automated fix (opens a PR)"
-              echo "1. Click **▶ Fix** for the violation you want to fix"
+              echo "#### Option 1 — 🛠️ Fix a violation (opens a PR)"
+              echo "1. Click **🛠️ Fix a violation** for the violation you want to fix"
               echo "2. Click **Run workflow** (top-right of the remediator page)"
               echo "3. Select the matching **Policy group** from the dropdown"
               echo "4. Click **Run workflow** — the agent creates a PR with the fix"
@@ -180,9 +181,9 @@ jobs:
               echo "| **Resource limit violations** | \`require-requests-limits\` — adds CPU/memory requests and limits |"
               echo "| **All violations** | Fixes both in a single PR |"
               echo ""
-              echo "#### Option 2 — Policy exception (via NCH)"
-              echo "1. Click **🔒 Exception** for the violation you want to exempt"
-              echo "2. Log in to NCH when prompted"
+              echo "#### Option 2 — 📋 File an Exception (via NCH)"
+              echo "1. Click **📋 File an Exception** for the violation you want to exempt"
+              echo "2. Log in to NCH when prompted — you will land directly on the findings page for this repository"
               echo "3. Select the violation and submit an exception request"
               echo "4. Once approved, the exception will be applied and future scans will pass"
             } >> "$GITHUB_STEP_SUMMARY"
