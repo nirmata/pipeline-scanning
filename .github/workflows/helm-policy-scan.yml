@@ -149,7 +149,7 @@ jobs:
               echo ""
               echo "For each violation, choose an action:"
               echo "- **🛠️ Fix a violation** — triggers the remediator agent to open a PR with an automated fix"
-              echo "- **📋 File an Exception** — opens the NCH findings page for this repository (must be [logged in to NCH](${NCH_LOGIN_URL}) first)"
+              echo "- **📋 File an Exception** — opens the NCH findings page for this repository so developers can file policyexceptions for their violations"
               echo ""
               echo "| Violation | Policy | Rule | Severity | Actions |"
               echo "|---|---|---|---|---|"
@@ -192,10 +192,9 @@ jobs:
               echo "| **All violations** | Fixes both in a single PR |"
               echo ""
               echo "#### Option 2 — 📋 File an Exception (via NCH)"
-              echo "1. [Log in to NCH](${NCH_LOGIN_URL}) first if you are not already logged in"
-              echo "2. Click **📋 File an Exception** — you will land directly on the findings page for this repository"
-              echo "3. Select the violation and submit an exception request"
-              echo "4. Once approved, the exception will be applied and future scans will pass"
+              echo "1. Click **📋 File an Exception** — you will land directly on the findings page for this repository"
+              echo "2. Select the violation and submit an exception request"
+              echo "3. Once approved, the exception will be applied and future scans will pass"
             } >> "$GITHUB_STEP_SUMMARY"
 
           else
