@@ -59,8 +59,8 @@ Configure these under **Settings → Secrets and variables → Actions**:
    - `policies/resource-limits/require_pod_requests_limits.yaml` — requires CPU/memory requests and limits
 2. **Publishes** results to NCH using `nctl scan repository --publish` so violations appear in the NCH policy report.
 3. **Writes a job summary** listing every violation with two action buttons:
-   - **▶ Fix** — opens the Install Remediator Agent workflow to auto-fix the violation via a PR
-   - **🔒 Exception** — links to the NCH policy report page where you can log in and submit a policy exception request
+   - **🛠️ Fix a violation** — opens the Install Remediator Agent workflow to auto-fix the violation via a PR
+   - **📋 File an Exception** — links directly to the NCH findings page for this repository (log in to NCH first if not already logged in)
 4. **Fails the pipeline** if any violations are found.
 
 ### Job summary example
@@ -69,8 +69,8 @@ When violations are detected the summary shows:
 
 | Violation | Policy | Rule | Severity | Actions |
 |---|---|---|---|---|
-| `my-nginx-chart` | `seccomp-policy` | `check-seccomp` | medium | ▶ Fix · 🔒 Exception |
-| `my-nginx-chart` | `resource-limits-policy` | `check-limits` | medium | ▶ Fix · 🔒 Exception |
+| `my-nginx-chart` | `seccomp-policy` | `check-seccomp` | medium | 🛠️ Fix a violation **OR** 📋 File an Exception |
+| `my-nginx-chart` | `resource-limits-policy` | `check-limits` | medium | 🛠️ Fix a violation **OR** 📋 File an Exception |
 
 Below the table, the summary explains both options and maps each policy group to the correct remediator dropdown value.
 
@@ -103,7 +103,7 @@ Below the table, the summary explains both options and maps each policy group to
 |---|---|---|
 | Seccomp violations | `remediation-seccomp-` | Adds `seccompProfile: RuntimeDefault` to all pod specs |
 | Resource limit violations | `remediation-resource-limits-` | Adds CPU/memory `requests` and `limits` to all containers |
-| All violations | both prefixes | Opens one PR per policy group |
+| All violations | both prefixes | Fixes both in a single PR |
 
 ---
 
@@ -121,7 +121,7 @@ Push to helm-app
         │
         │  Job summary shows per-violation buttons
         │
-        ├── click ▶ Fix ──────────────────────────────────────────────┐
+        ├── click 🛠️ Fix a violation ────────────────────────────────┐
         │                                                              ▼
         │                                             ┌───────────────────────────┐
         │                                             │  Install Remediator Agent │
@@ -131,7 +131,7 @@ Push to helm-app
         │                                             │  → PR(s) opened with fix  │
         │                                             └───────────────────────────┘
         │
-        └── click 🔒 Exception ──► NCH policy report ──► submit exception request
+        └── click 📋 File an Exception ──► NCH findings page ──► submit exception request
 ```
 
 ---
