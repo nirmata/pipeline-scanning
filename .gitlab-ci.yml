@@ -1,4 +1,4 @@
-# Scans the Helm chart against custom Kyverno policies from the kyverno-policies branch.
+# Scans the Helm chart against custom Kyverno policies from the kyverno-policies branch..
 # Publishes results to NCH, then shows per-violation action links in job output:
 #   Fix          — triggers the remediator child pipeline to open a fix MR
 #   Exception    — links to NCH where the user can request a policy exception
