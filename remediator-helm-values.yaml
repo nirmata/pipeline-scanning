@@ -6,7 +6,7 @@ crds:
 replicaCount: 1
 
 image:
-  repository: ghcr.io/nirmata/go-agent-remediator
+  repository: reg.nirmata.io/nirmata/go-nirmata-agent
   pullPolicy: IfNotPresent
 
 imagePullSecrets: []
@@ -83,9 +83,9 @@ resources:
 # Logging configuration
 logging:
   # Set verbosity level (0=info, 1=audit+info, 2=debug+audit+info)
-  verbosity: 2
+  verbosity: 0
   # Enable audit logging (if true, overrides verbosity=0 to ensure audit logs are visible)
-  enableAudit: true
+  enableAudit: false
 
 nodeSelector: {}
 tolerations: []
@@ -151,35 +151,21 @@ nirmata:
   # Defaults to "api-token"
   apiTokenSecretKey: "api-token"
 
-# ToolConfig for GitHub (used by CreatePR)
+# ToolConfig for GitLab (used by CreatePR — for type=gitlab the action
+# actually creates a Merge Request despite the name)
 tool:
   enabled: true
-  name: github-tool
-  type: github
+  name: gitlab-tool
+  type: gitlab
 
-  # Authentication method configuration
-  # Choose between:
-  #   - "nirmata-app" (default & recommended): Uses Nirmata-managed GitHub App with existing credentials
-  #   - "app": Custom GitHub App authentication with private key
-  #   - "pat": Personal Access Token (simplest for testing)
+  # Only "pat" is supported for GitLab today.
+  # GitHub-specific methods ("nirmata-app", "app") will not work with type=gitlab.
   credentials:
-    method: pat  # Options: "nirmata-app" (default), "app", or "pat"
+    method: pat
 
-    # Nirmata GitHub App is the default - no additional configuration needed!
-    # Uses SERVICE_ACCOUNT_TOKEN or API_TOKEN already configured for LLM access
-
-    # Custom GitHub App configuration (uncomment and use when method: app)
-    # app:
-    #   appId: ""  # Set this to your GitHub App ID
-    #   # installationId: ""  # Optional: set if you want to specify installation ID
-    #   privateKeySecret:
-    #     name: "github-app-private-key"
-    #     key: "private-key.pem"
-
-    # PAT configuration (uncomment and use when method: pat)
     pat:
       secret:
-        name: "github-pat-token"
+        name: "gitlab-pat-token"
         key: "token"
 
   defaults:
@@ -217,13 +203,13 @@ remediator:
             - seccomp-policy
             - resource-limits-policy
   remediation:
-    schedule: "*/5 * * * *"
+    schedule: "0 */6 * * *"
     eventPolling:
       enabled: true
       # intervalMinutes: 5  # Optional: polling interval in minutes (default: 5)
     actions:
       - type: CreatePR
-        toolRefName: github-tool
+        toolRefName: gitlab-tool
 
 # Agent Configuration
 # Deploy a custom Agent resource for autonomous operations

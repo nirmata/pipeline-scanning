@@ -1,9 +1,11 @@
-# Child pipeline: deploys the Nirmata remediator agent on a local kind cluster.
+# Child pipeline: deploys the Nirmata agent (nirmata/nirmata-agent chart, --devel)
+# on a local kind cluster, configured for GitLab (tool.type=gitlab).
 # The agent scans Helm chart resources against VCS policies and creates Merge Requests with fixes.
 #
 # Required CI/CD variables (set in GitLab project Settings > CI/CD > Variables):
 #   NIRMATA_SERVICE_ACCOUNT_TOKEN — Nirmata service account token (masked)
-#   PAT                           — GitLab Personal Access Token with api scope (masked)
+#   PAT                           — GitLab Personal Access Token (masked)
+#                                   Required scopes: api, read_repository, write_repository
 #
 # Policy groups (set POLICY_GROUP variable):
 #   "All violations"              — fixes seccomp + resource limits in one MR
@@ -134,7 +136,8 @@ install-remediator:
         --from-literal=service-account-token="${NIRMATA_SERVICE_ACCOUNT_TOKEN}" \
         -n nirmata
 
-      kubectl create secret generic github-pat-token \
+      # GitLab PAT must have at least: api, read_repository, write_repository scopes
+      kubectl create secret generic gitlab-pat-token \
         --from-literal=token="${PAT}" \
         -n nirmata
 
@@ -142,9 +145,10 @@ install-remediator:
         --from-literal=mapping='[]' \
         -n nirmata
 
-    # Clone kyverno-charts and install remediator
+    # Add the Nirmata Helm repo and install the nirmata-agent chart
     - |
-      git clone --depth=1 https://github.com/nirmata/kyverno-charts.git /tmp/kyverno-charts
+      helm repo add nirmata https://nirmata.github.io/kyverno-charts
+      helm repo update nirmata
 
     - |
       PATCH_FILE=$(grep PATCH_FILE patch.env | cut -d= -f2 || echo "")
@@ -154,27 +158,27 @@ install-remediator:
         EXTRA_VALUES="--values ${PATCH_FILE}"
       fi
 
-      helm upgrade --install remediator-agent /tmp/kyverno-charts/charts/go-agent-remediator \
+      helm upgrade --install nirmata-agent nirmata/nirmata-agent \
         --namespace nirmata \
         --values remediator-helm-values.yaml \
         ${EXTRA_VALUES} \
-        --set image.repository=ghcr.io/nirmata/go-agent-remediator \
+        --devel \
         --wait \
         --timeout 10m
-      echo "Remediator agent installed successfully."
+      echo "Nirmata agent installed successfully."
 
     # Bounce agent to trigger immediate remediation cycle
     - |
-      echo "Scaling down remediator agent..."
-      kubectl scale deployment remediator-agent -n nirmata --replicas=0
-      kubectl wait --for=delete pod -l app.kubernetes.io/instance=remediator-agent -n nirmata --timeout=60s
+      echo "Scaling down nirmata-agent..."
+      kubectl scale deployment nirmata-agent -n nirmata --replicas=0
+      kubectl wait --for=delete pod -l app.kubernetes.io/instance=nirmata-agent -n nirmata --timeout=60s
 
       echo "Deleting all RemediationRecord CRs..."
       kubectl delete remediationrecord --all -n nirmata 2>/dev/null || echo "(no RemediationRecords found)"
 
       echo "Scaling back up..."
-      kubectl scale deployment remediator-agent -n nirmata --replicas=1
-      kubectl wait --for=condition=ready pod -l app.kubernetes.io/instance=remediator-agent -n nirmata --timeout=120s
+      kubectl scale deployment nirmata-agent -n nirmata --replicas=1
+      kubectl wait --for=condition=ready pod -l app.kubernetes.io/instance=nirmata-agent -n nirmata --timeout=120s
       echo "Agent is back up."
 
     # Tail agent logs until MR(s) created (max 8 minutes)
@@ -182,7 +186,7 @@ install-remediator:
       EXPECTED_MRS=1
       echo "Waiting for ${EXPECTED_MRS} MR(s) to be created..."
 
-      POD=$(kubectl get pod -n nirmata -l app.kubernetes.io/instance=remediator-agent \
+      POD=$(kubectl get pod -n nirmata -l app.kubernetes.io/instance=nirmata-agent \
         -o jsonpath='{.items[0].metadata.name}')
       echo "Tailing logs from pod: ${POD}"
       echo "---"
@@ -212,12 +216,12 @@ install-remediator:
       echo "  Cluster      : remediator-demo (kind)"
       echo "  Namespace    : nirmata"
       echo "  Policy group : ${POLICY_GROUP}"
-      echo "  Chart        : go-agent-remediator from nirmata/kyverno-charts"
+      echo "  Chart        : nirmata/nirmata-agent (--devel)"
       echo ""
-      READY=$(kubectl get deployment -n nirmata -l app.kubernetes.io/instance=remediator-agent \
+      READY=$(kubectl get deployment -n nirmata -l app.kubernetes.io/instance=nirmata-agent \
         -o jsonpath='{.items[0].status.readyReplicas}' 2>/dev/null || echo "0")
       if [ "${READY:-0}" -ge 1 ]; then
-        echo "  ✅ Remediator agent is running"
+        echo "  ✅ Nirmata agent is running"
         echo ""
         echo "  Next step: Check the Merge Requests tab for the remediation MR."
         echo "  → ${CI_PROJECT_URL}/-/merge_requests"
