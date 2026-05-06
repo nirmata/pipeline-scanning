@@ -25,7 +25,7 @@ install-remediator:
   image: ubuntu:22.04
   timeout: 30 minutes
   before_script:
-    - apt-get update -qq && apt-get install -y -qq curl git
+    - apt-get update -qq && apt-get install -y -qq curl git unzip
 
   script:
     # Install yq
