@@ -1,0 +1,248 @@
+# Child pipeline: deploys the Nirmata remediator agent on a local kind cluster.
+# The agent scans Helm chart resources against VCS policies and creates Merge Requests with fixes.
+#
+# Required CI/CD variables (set in GitLab project Settings > CI/CD > Variables):
+#   NIRMATA_SERVICE_ACCOUNT_TOKEN — Nirmata service account token (masked)
+#   PAT                           — GitLab Personal Access Token with api scope (masked)
+#
+# Policy groups (set POLICY_GROUP variable):
+#   "All violations"              — fixes seccomp + resource limits in one MR
+#   "Seccomp violations"          — adds seccompProfile: RuntimeDefault
+#   "Resource limit violations"   — adds CPU/memory requests and limits
+
+variables:
+  NGINX_REPO: "$CI_PROJECT_URL"
+  CHART_REF: "helm-app"
+  POLICIES_BRANCH: "kyverno-policies"
+  POLICY_GROUP: "All violations"
+  GIT_DEPTH: "0"
+
+stages:
+  - install-remediator
+
+install-remediator:
+  stage: install-remediator
+  image: ubuntu:22.04
+  timeout: 30 minutes
+  before_script:
+    - apt-get update -qq && apt-get install -y -qq curl git
+
+  script:
+    # Install yq
+    - |
+      curl -fsSL https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64 \
+        -o /usr/local/bin/yq
+      chmod +x /usr/local/bin/yq
+      yq --version
+
+    # Fetch policy manifest from kyverno-policies branch
+    - |
+      git fetch origin "$POLICIES_BRANCH" || git fetch "$NGINX_REPO" "$POLICIES_BRANCH":refs/remotes/origin/"$POLICIES_BRANCH"
+      git show origin/"$POLICIES_BRANCH":policies/manifest.yaml > /tmp/manifest.yaml
+      echo "Loaded manifest:"
+      cat /tmp/manifest.yaml
+
+    # Generate VCS values patch from manifest based on selected POLICY_GROUP
+    - |
+      SELECTION="${POLICY_GROUP}"
+      REPO="${NGINX_REPO}"
+      CHART_REF_VAL="${CHART_REF}"
+
+      if [ "${SELECTION}" = "All violations" ]; then
+        echo "PATCH_FILE=" >> patch.env
+        echo "Using base values file as-is (all policy groups)."
+      else
+        IDX=$(yq e ".policies | to_entries | .[] | select(.value.displayName == \"${SELECTION}\") | .key" /tmp/manifest.yaml)
+
+        if [ -z "${IDX}" ]; then
+          echo "ERROR: No manifest entry found for '${SELECTION}'"
+          exit 1
+        fi
+
+        NAME=$(yq e ".policies[${IDX}].name"           /tmp/manifest.yaml)
+        POLICY_PATH=$(yq e ".policies[${IDX}].path"    /tmp/manifest.yaml)
+        REF=$(yq e ".policies[${IDX}].ref"             /tmp/manifest.yaml)
+        RES=$(yq e ".policies[${IDX}].resourceName"    /tmp/manifest.yaml)
+        PREFIX=$(yq e ".policies[${IDX}].branchPrefix" /tmp/manifest.yaml)
+
+        echo "Generating VCS patch for: ${NAME} (${POLICY_PATH})"
+
+        cat > /tmp/vcs-patch.yaml << EOF
+      remediator:
+        target:
+          vcs:
+            policies:
+              - name: ${NAME}
+                repo: ${REPO}
+                path: ${POLICY_PATH}
+                ref: ${REF}
+            resources:
+              - name: ${RES}
+                repo: ${REPO}
+                path: ./
+                ref: ${CHART_REF_VAL}
+                policyRefs:
+                  - ${NAME}
+      tool:
+        defaults:
+          git:
+            pullRequests:
+              branchPrefix: ${PREFIX}
+      EOF
+
+        echo "Generated patch:"
+        cat /tmp/vcs-patch.yaml
+        echo "PATCH_FILE=/tmp/vcs-patch.yaml" >> patch.env
+      fi
+
+    # Install kind
+    - |
+      curl -Lo ./kind https://kind.sigs.k8s.io/dl/v0.27.0/kind-linux-amd64
+      chmod +x ./kind
+      mv ./kind /usr/local/bin/kind
+      kind version
+
+    # Install Helm
+    - |
+      curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+      helm version
+
+    # Install kubectl
+    - |
+      curl -fsSL "https://dl.k8s.io/release/$(curl -fsSL https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl" \
+        -o /usr/local/bin/kubectl
+      chmod +x /usr/local/bin/kubectl
+      kubectl version --client
+
+    # Create kind cluster
+    - |
+      kind create cluster --name remediator-demo --wait 120s
+      kubectl cluster-info
+
+    # Wait for kube-system pods
+    - |
+      echo "Waiting for kube-system pods..."
+      kubectl wait --for=condition=ready pod --all -n kube-system --timeout=180s
+      echo "All kube-system pods ready."
+      kubectl get pods -A
+
+    # Create nirmata namespace and secrets
+    - |
+      kubectl create namespace nirmata
+
+      kubectl create secret generic nirmata-service-account-token \
+        --from-literal=service-account-token="${NIRMATA_SERVICE_ACCOUNT_TOKEN}" \
+        -n nirmata
+
+      kubectl create secret generic github-pat-token \
+        --from-literal=token="${PAT}" \
+        -n nirmata
+
+      kubectl create configmap repo-namespace-mapping \
+        --from-literal=mapping='[]' \
+        -n nirmata
+
+    # Clone kyverno-charts and install remediator
+    - |
+      git clone --depth=1 https://github.com/nirmata/kyverno-charts.git /tmp/kyverno-charts
+
+    - |
+      PATCH_FILE=$(grep PATCH_FILE patch.env | cut -d= -f2 || echo "")
+
+      EXTRA_VALUES=""
+      if [ -n "${PATCH_FILE}" ]; then
+        EXTRA_VALUES="--values ${PATCH_FILE}"
+      fi
+
+      helm upgrade --install remediator-agent /tmp/kyverno-charts/charts/go-agent-remediator \
+        --namespace nirmata \
+        --values remediator-helm-values.yaml \
+        ${EXTRA_VALUES} \
+        --set image.repository=ghcr.io/nirmata/go-agent-remediator \
+        --wait \
+        --timeout 10m
+      echo "Remediator agent installed successfully."
+
+    # Bounce agent to trigger immediate remediation cycle
+    - |
+      echo "Scaling down remediator agent..."
+      kubectl scale deployment remediator-agent -n nirmata --replicas=0
+      kubectl wait --for=delete pod -l app.kubernetes.io/instance=remediator-agent -n nirmata --timeout=60s
+
+      echo "Deleting all RemediationRecord CRs..."
+      kubectl delete remediationrecord --all -n nirmata 2>/dev/null || echo "(no RemediationRecords found)"
+
+      echo "Scaling back up..."
+      kubectl scale deployment remediator-agent -n nirmata --replicas=1
+      kubectl wait --for=condition=ready pod -l app.kubernetes.io/instance=remediator-agent -n nirmata --timeout=120s
+      echo "Agent is back up."
+
+    # Tail agent logs until MR(s) created (max 8 minutes)
+    - |
+      EXPECTED_MRS=1
+      echo "Waiting for ${EXPECTED_MRS} MR(s) to be created..."
+
+      POD=$(kubectl get pod -n nirmata -l app.kubernetes.io/instance=remediator-agent \
+        -o jsonpath='{.items[0].metadata.name}')
+      echo "Tailing logs from pod: ${POD}"
+      echo "---"
+
+      COUNT=0
+      timeout 480 kubectl logs -n nirmata "${POD}" --follow | \
+        while IFS= read -r line; do
+          echo "$line"
+          if echo "$line" | grep -q "Pull request created\|Merge request created"; then
+            COUNT=$((COUNT + 1))
+            echo "--- MR ${COUNT}/${EXPECTED_MRS} created."
+            if [ "${COUNT}" -ge "${EXPECTED_MRS}" ]; then
+              echo "All ${EXPECTED_MRS} MR(s) created. Stopping log tail."
+              exit 0
+            fi
+          fi
+        done || true
+      echo "---"
+      echo "Log tail ended."
+
+    # Print final summary
+    - |
+      echo ""
+      echo "════════════════════════════════════════════════════════════"
+      echo "  Remediator Agent Summary"
+      echo "════════════════════════════════════════════════════════════"
+      echo "  Cluster      : remediator-demo (kind)"
+      echo "  Namespace    : nirmata"
+      echo "  Policy group : ${POLICY_GROUP}"
+      echo "  Chart        : go-agent-remediator from nirmata/kyverno-charts"
+      echo ""
+      READY=$(kubectl get deployment -n nirmata -l app.kubernetes.io/instance=remediator-agent \
+        -o jsonpath='{.items[0].status.readyReplicas}' 2>/dev/null || echo "0")
+      if [ "${READY:-0}" -ge 1 ]; then
+        echo "  ✅ Remediator agent is running"
+        echo ""
+        echo "  Next step: Check the Merge Requests tab for the remediation MR."
+        echo "  → ${CI_PROJECT_URL}/-/merge_requests"
+      else
+        echo "  ❌ Deployment did not complete successfully"
+        echo "     Check the 'Install remediator agent' step logs for details."
+      fi
+      echo "════════════════════════════════════════════════════════════"
+
+  after_script:
+    - |
+      echo "=== RemediationRecords ==="
+      kubectl get remediationrecord -n nirmata 2>/dev/null || echo "(none)"
+      echo ""
+      echo "=== Remediator CR status ==="
+      kubectl get remediator nirmata-agent -n nirmata -o yaml 2>/dev/null || echo "(not found)"
+      echo ""
+      echo "=== Pod status ==="
+      kubectl get pods -n nirmata -o wide 2>/dev/null || echo "(namespace not found)"
+      echo ""
+      echo "=== Namespace events ==="
+      kubectl get events -n nirmata --sort-by='.lastTimestamp' 2>/dev/null | tail -30 || true
+
+  artifacts:
+    when: on_failure
+    paths:
+      - patch.env
+    expire_in: 1 day
