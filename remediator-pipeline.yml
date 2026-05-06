@@ -24,23 +24,23 @@ stages:
 
 install-remediator:
   stage: install-remediator
-  image: ubuntu:22.04
-  # Use the self-hosted EC2 runner (kind-runner tag). GitLab.com SaaS
-  # shared runners disallow privileged Docker, which kind requires to
-  # spin up nested cluster nodes — this job must run on a runner
-  # registered with privileged = true.
+  # Runs on the self-hosted EC2 runner (shell executor) where Docker is
+  # already installed on the host and gitlab-runner is in the docker group.
+  # All tools install to $HOME/bin (no sudo required).
   tags:
     - kind-runner
   timeout: 30 minutes
   before_script:
-    - apt-get update -qq && apt-get install -y -qq curl git unzip
+    - mkdir -p "$HOME/bin"
+    - export PATH="$HOME/bin:$PATH"
 
   script:
     # Install yq
     - |
+      export PATH="$HOME/bin:$PATH"
       curl -fsSL https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64 \
-        -o /usr/local/bin/yq
-      chmod +x /usr/local/bin/yq
+        -o "$HOME/bin/yq"
+      chmod +x "$HOME/bin/yq"
       yq --version
 
     # Fetch policy manifest from kyverno-policies branch
@@ -105,21 +105,24 @@ install-remediator:
 
     # Install kind
     - |
-      curl -Lo ./kind https://kind.sigs.k8s.io/dl/v0.27.0/kind-linux-amd64
-      chmod +x ./kind
-      mv ./kind /usr/local/bin/kind
+      export PATH="$HOME/bin:$PATH"
+      curl -Lo "$HOME/bin/kind" https://kind.sigs.k8s.io/dl/v0.27.0/kind-linux-amd64
+      chmod +x "$HOME/bin/kind"
       kind version
 
-    # Install Helm
+    # Install Helm (HELM_INSTALL_DIR + USE_SUDO=false redirects the get-helm-3 script to $HOME/bin)
     - |
-      curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+      export PATH="$HOME/bin:$PATH"
+      export HELM_INSTALL_DIR="$HOME/bin"
+      curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | USE_SUDO=false bash
       helm version
 
     # Install kubectl
     - |
+      export PATH="$HOME/bin:$PATH"
       curl -fsSL "https://dl.k8s.io/release/$(curl -fsSL https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl" \
-        -o /usr/local/bin/kubectl
-      chmod +x /usr/local/bin/kubectl
+        -o "$HOME/bin/kubectl"
+      chmod +x "$HOME/bin/kubectl"
       kubectl version --client
 
     # Create kind cluster
