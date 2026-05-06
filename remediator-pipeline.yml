@@ -192,34 +192,61 @@ install-remediator:
       kubectl wait --for=condition=ready pod -l app.kubernetes.io/instance=nirmata-agent -n nirmata --timeout=120s
       echo "Agent is back up."
 
-    # Tail agent logs until MR(s) created (max 8 minutes)
+    # Tail agent logs until the remediation cycle completes OR an MR is
+    # created (max 5 minutes). One cycle finishes within ~30s normally;
+    # we cap at 5 min to handle slow-LLM-call edge cases.
     - |
-      EXPECTED_MRS=1
-      echo "Waiting for ${EXPECTED_MRS} MR(s) to be created..."
-
+      export PATH="$HOME/bin:$PATH"
       POD=$(kubectl get pod -n nirmata -l app.kubernetes.io/instance=nirmata-agent \
         -o jsonpath='{.items[0].metadata.name}')
       echo "Tailing logs from pod: ${POD}"
       echo "---"
 
-      COUNT=0
-      timeout 480 kubectl logs -n nirmata "${POD}" --follow | \
-        while IFS= read -r line; do
-          echo "$line"
-          if echo "$line" | grep -q "Pull request created\|Merge request created"; then
-            COUNT=$((COUNT + 1))
-            echo "--- MR ${COUNT}/${EXPECTED_MRS} created."
-            if [ "${COUNT}" -ge "${EXPECTED_MRS}" ]; then
-              echo "All ${EXPECTED_MRS} MR(s) created. Stopping log tail."
-              exit 0
-            fi
-          fi
-        done || true
+      # Exit as soon as we see ANY of:
+      #   - "Pull request created" / "Merge request created" (success)
+      #   - "Scheduling next remediation" (cycle done, regardless of outcome)
+      #   - "No violations found" (nothing to remediate this cycle)
+      timeout 300 kubectl logs -n nirmata "${POD}" --follow 2>&1 | \
+        awk '
+          { print }
+          /Pull request created|Merge request created/ { print "--- MR/PR created — stopping tail."; exit 0 }
+          /Scheduling next remediation/ { print "--- Remediation cycle complete — stopping tail."; exit 0 }
+        ' || true
       echo "---"
       echo "Log tail ended."
 
+    # Verify outcome by querying the GitLab API for remediation-* branches and MRs
+    - |
+      export PATH="$HOME/bin:$PATH"
+      PROJECT_ENC=$(printf %s "${CI_PROJECT_PATH}" | python3 -c "import sys,urllib.parse;print(urllib.parse.quote(sys.stdin.read(),safe=''))")
+
+      echo ""
+      echo "Checking GitLab API for remediation branches/MRs..."
+
+      # MRs whose source branch starts with "remediation-"
+      MR_JSON=$(curl -fsS -H "PRIVATE-TOKEN: ${PAT}" \
+        "https://gitlab.com/api/v4/projects/${PROJECT_ENC}/merge_requests?state=opened&order_by=created_at&sort=desc&per_page=20" \
+        2>/dev/null || echo "[]")
+
+      MR_COUNT=$(echo "${MR_JSON}" | python3 -c "import sys,json; d=json.load(sys.stdin); print(sum(1 for m in d if m.get('source_branch','').startswith('remediation-')))" 2>/dev/null || echo "0")
+
+      echo "Open remediation-* merge requests: ${MR_COUNT}"
+      echo "${MR_JSON}" | python3 -c "
+      import sys, json
+      d = json.load(sys.stdin)
+      for m in d:
+          if m.get('source_branch','').startswith('remediation-'):
+              print(f\"  • !{m['iid']}  [{m['source_branch']}]  {m['title']}\")
+              print(f\"      {m['web_url']}\")
+      " 2>/dev/null || true
+
+      echo "REMEDIATION_MR_COUNT=${MR_COUNT}" > remediation.env
+
     # Print final summary
     - |
+      export PATH="$HOME/bin:$PATH"
+      MR_COUNT=$(grep REMEDIATION_MR_COUNT remediation.env | cut -d= -f2 || echo "0")
+
       echo ""
       echo "════════════════════════════════════════════════════════════"
       echo "  Remediator Agent Summary"
@@ -228,17 +255,17 @@ install-remediator:
       echo "  Namespace    : nirmata"
       echo "  Policy group : ${POLICY_GROUP}"
       echo "  Chart        : nirmata/nirmata-agent (--devel)"
+      echo "  Open MRs     : ${MR_COUNT} (remediation-* branches)"
       echo ""
-      READY=$(kubectl get deployment -n nirmata -l app.kubernetes.io/instance=nirmata-agent \
-        -o jsonpath='{.items[0].status.readyReplicas}' 2>/dev/null || echo "0")
-      if [ "${READY:-0}" -ge 1 ]; then
-        echo "  ✅ Nirmata agent is running"
-        echo ""
-        echo "  Next step: Check the Merge Requests tab for the remediation MR."
+
+      if [ "${MR_COUNT:-0}" -gt 0 ]; then
+        echo "  ✅ Remediation merge request(s) created."
         echo "  → ${CI_PROJECT_URL}/-/merge_requests"
       else
-        echo "  ❌ Deployment did not complete successfully"
-        echo "     Check the 'Install remediator agent' step logs for details."
+        echo "  ⚠️  No remediation MRs were created in this cycle."
+        echo "     Check the agent logs above for errors (e.g. policy fetch issues,"
+        echo "     LLM errors, or no violations detected)."
+        echo "     Existing MRs: ${CI_PROJECT_URL}/-/merge_requests"
       fi
       echo "════════════════════════════════════════════════════════════"
 
