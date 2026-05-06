@@ -75,9 +75,14 @@ helm-policy-scan:
       if [ -z "${NIRMATA_TEAM_TOKEN:-}" ]; then
         echo "NIRMATA_TEAM_TOKEN not set — skipping NCH publish."
       else
-        nctl scan repository ./ \
-          --publish-token "$NIRMATA_TEAM_TOKEN" \
-          --policies "$POLICIES_PATH" || true
+        # nctl scan repository ./ \
+        #   --publish-token "$NIRMATA_TEAM_TOKEN" \
+        #   --policies "$POLICIES_PATH" || true
+        nctl scan repository \
+            --policies="$POLICIES_PATH" \
+            --url "${NIRMATA_URL}" \
+            --token "${{ secrets.NIRMATA_TEAM_TOKEN }}" \
+            --publish
       fi
 
     # Parse violations from the scan report
