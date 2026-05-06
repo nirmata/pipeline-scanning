@@ -16,8 +16,16 @@ variables:
   CHART_PATH: "charts/my-nginx-chart"
   POLICIES_BRANCH: "kyverno-policies"
   POLICIES_PATH: "policies"
-  POLICY_GROUP: "All violations"
   GIT_DEPTH: "0"
+  # POLICY_GROUP: shown as a dropdown on the "Run pipeline" page.
+  # Only used when manually triggering the remediator pipeline.
+  POLICY_GROUP:
+    value: "All violations"
+    description: "Which policy group to fix (used only when manually triggering the remediator pipeline)"
+    options:
+      - "All violations"
+      - "Seccomp violations"
+      - "Resource limit violations"
 
 stages:
   - scan
@@ -31,9 +39,10 @@ helm-policy-scan:
   image: ubuntu:22.04
   timeout: 20 minutes
   rules:
+    # Only run the scan automatically on pushes to helm-app and on schedules.
+    # Manual web/api triggers skip the scan and go straight to the remediator
+    # (so the "Fix a violation" link runs the remediator only, not the full scan).
     - if: '$CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == "helm-app"'
-    - if: '$CI_PIPELINE_SOURCE == "web"'
-    - if: '$CI_PIPELINE_SOURCE == "api"'
     - if: '$CI_PIPELINE_SOURCE == "schedule"'
   before_script:
     - apt-get update -qq && apt-get install -y -qq curl git jq python3 unzip
@@ -127,7 +136,9 @@ helm-policy-scan:
 
       # Build links
       PROJECT_URL="${CI_PROJECT_URL}"
-      REMEDIATE_URL="${CI_PROJECT_URL}/-/pipelines/new?var[POLICY_GROUP]=${POLICY_GROUP}"
+      # Pre-select the helm-app branch on the "Run pipeline" page so the
+      # POLICY_GROUP dropdown is populated correctly.
+      REMEDIATE_URL="${CI_PROJECT_URL}/-/pipelines/new?ref=helm-app"
 
       ENCODED_REPO=$(python3 -c "import urllib.parse; print(urllib.parse.quote('${PROJECT_URL}', safe=''))")
       if echo "${NIRMATA_URL:-}" | grep -q "://nirmata\.io"; then
@@ -172,19 +183,15 @@ helm-policy-scan:
         echo ""
         echo "  Option 1 — 🛠  Fix a violation (opens a Merge Request)"
         echo ""
-        echo "  1. Go to: ${PROJECT_URL}/-/pipelines/new"
-        echo "  2. In the 'Run for branch name or tag' dropdown, select 'helm-app'"
-        echo "     (the default is 'main' — you MUST change it to helm-app or the pipeline rules won't match)"
-        echo "  3. Under 'Variables', add a row with:"
-        echo "       Variable type:  Variable"
-        echo "       Variable key:   POLICY_GROUP"
-        echo "       Variable value: one of —"
-        echo "          'All violations'              — fixes both seccomp + resource limits in one MR"
-        echo "          'Seccomp violations'          — adds seccompProfile: RuntimeDefault"
-        echo "          'Resource limit violations'   — adds CPU/memory requests and limits"
-        echo "  4. Click 'New pipeline' (blue button at the bottom)"
-        echo "  5. When the pipeline starts, click the manual 'trigger-remediator' job"
-        echo "     to launch the remediator child pipeline. The agent will create an MR with the fix."
+        echo "  1. Open: ${REMEDIATE_URL}"
+        echo "     (the 'helm-app' branch is pre-selected for you)"
+        echo "  2. Use the POLICY_GROUP dropdown to choose what to fix:"
+        echo "       'All violations'              — fixes both seccomp + resource limits in one MR"
+        echo "       'Seccomp violations'          — adds seccompProfile: RuntimeDefault"
+        echo "       'Resource limit violations'   — adds CPU/memory requests and limits"
+        echo "  3. Click 'New pipeline'"
+        echo "  4. The remediator runs automatically (the scan job is skipped on manual runs)"
+        echo "     and creates an MR with the fix."
         echo ""
         echo "  Option 2 — 📋 File an Exception (via NCH)"
         echo ""
@@ -213,12 +220,17 @@ helm-policy-scan:
     expire_in: 7 days
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Stage 2: remediate (manual trigger)
+# Stage 2: remediate
+# Auto-runs only when the pipeline is started manually from the web UI or API
+# (i.e. when the user clicks "Fix a violation" → "New pipeline" with their
+# chosen POLICY_GROUP). Does NOT run on regular pushes or schedules — those
+# only trigger the scan above.
 # ─────────────────────────────────────────────────────────────────────────────
 trigger-remediator:
   stage: remediate
-  when: manual
-  allow_failure: true
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "web"'
+    - if: '$CI_PIPELINE_SOURCE == "api"'
   variables:
     POLICY_GROUP: "$POLICY_GROUP"
   trigger:
