@@ -68,21 +68,16 @@ helm-policy-scan:
       echo "SCAN_EXIT=$SCAN_EXIT" > scan-meta.env
 
     # Publish scan results to NCH (optional)
-    # Uses the nctl login → nctl scan repo flow recommended by the NCH
-    # "Add Repository" wizard, which is required to register new repos in NCH.
+    # Uses --publish-token (works with a team token) per the nctl docs:
+    #   nctl scan repository <local_repo_path> --publish-token <TOKEN> --policies <policies>
     - |
       export PATH="$PATH:$(dirname "$(command -v nctl)" 2>/dev/null || echo /usr/local/bin)"
-      if [ -z "${NIRMATA_URL:-}" ] || [ -z "${NIRMATA_USERID:-}" ] || [ -z "${NIRMATA_TEAM_TOKEN:-}" ]; then
-        echo "NIRMATA_URL, NIRMATA_USERID, or NIRMATA_TEAM_TOKEN not set — skipping NCH publish."
+      if [ -z "${NIRMATA_TEAM_TOKEN:-}" ]; then
+        echo "NIRMATA_TEAM_TOKEN not set — skipping NCH publish."
       else
-        nctl login \
-          --url "$NIRMATA_URL" \
-          --userid "$NIRMATA_USERID" \
-          --token "$NIRMATA_TEAM_TOKEN"
-
-        nctl scan repo ./ \
-          --policies="$POLICIES_PATH" \
-          --publish || true
+        nctl scan repository ./ \
+          --publish-token "$NIRMATA_TEAM_TOKEN" \
+          --policies "$POLICIES_PATH" || true
       fi
 
     # Parse violations from the scan report
