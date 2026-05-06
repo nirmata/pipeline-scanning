@@ -125,8 +125,10 @@ install-remediator:
       chmod +x "$HOME/bin/kubectl"
       kubectl version --client
 
-    # Create kind cluster
+    # Create kind cluster (delete any leftover one first — the runner is persistent)
     - |
+      export PATH="$HOME/bin:$PATH"
+      kind delete cluster --name remediator-demo 2>/dev/null || true
       kind create cluster --name remediator-demo --wait 120s
       kubectl cluster-info
 
@@ -242,6 +244,7 @@ install-remediator:
 
   after_script:
     - |
+      export PATH="$HOME/bin:$PATH"
       echo "=== RemediationRecords ==="
       kubectl get remediationrecord -n nirmata 2>/dev/null || echo "(none)"
       echo ""
@@ -253,6 +256,9 @@ install-remediator:
       echo ""
       echo "=== Namespace events ==="
       kubectl get events -n nirmata --sort-by='.lastTimestamp' 2>/dev/null | tail -30 || true
+      echo ""
+      echo "=== Cleanup: deleting kind cluster ==="
+      kind delete cluster --name remediator-demo 2>/dev/null || true
 
   artifacts:
     when: on_failure
