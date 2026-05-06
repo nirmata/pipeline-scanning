@@ -81,7 +81,7 @@ helm-policy-scan:
         nctl scan repository \
             --policies="$POLICIES_PATH" \
             --url "${NIRMATA_URL}" \
-            --token "${{ secrets.NIRMATA_TEAM_TOKEN }}" \
+            --token "$NIRMATA_TEAM_TOKEN" \
             --publish
       fi
 
