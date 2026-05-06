@@ -25,6 +25,12 @@ stages:
 install-remediator:
   stage: install-remediator
   image: ubuntu:22.04
+  # Use the self-hosted EC2 runner (kind-runner tag). GitLab.com SaaS
+  # shared runners disallow privileged Docker, which kind requires to
+  # spin up nested cluster nodes — this job must run on a runner
+  # registered with privileged = true.
+  tags:
+    - kind-runner
   timeout: 30 minutes
   before_script:
     - apt-get update -qq && apt-get install -y -qq curl git unzip
