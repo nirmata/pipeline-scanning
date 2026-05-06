@@ -67,24 +67,24 @@ helm-policy-scan:
         -o json | tee report.json || SCAN_EXIT=$?
       echo "SCAN_EXIT=$SCAN_EXIT" > scan-meta.env
 
-    # Publish scan results to NCH (optional)
-    # Uses --publish-token (works with a team token) per the nctl docs:
-    #   nctl scan repository <local_repo_path> --publish-token <TOKEN> --policies <policies>
+    # Publish scan results to NCH (optional, non-fatal)
+    # Wrapped in a subshell with || true so a publish failure (e.g. NCH
+    # backend or token-scope issues) doesn't short-circuit the rest of the
+    # job — we still want the violation summary and "Fix"/"Exception"
+    # action links to be printed below.
     - |
       export PATH="$PATH:$(dirname "$(command -v nctl)" 2>/dev/null || echo /usr/local/bin)"
       if [ -z "${NIRMATA_TEAM_TOKEN:-}" ]; then
         echo "NIRMATA_TEAM_TOKEN not set — skipping NCH publish."
       else
-        # nctl scan repository ./ \
-        #   --publish-token "$NIRMATA_TEAM_TOKEN" \
-        #   --policies "$POLICIES_PATH" || true
         git clone https://github.com/nirmata/pipeline-scanning.git pipeline-scanning
         cd pipeline-scanning && git checkout kyverno-policies && cd ..
         nctl scan repository \
             --policies="pipeline-scanning/policies" \
             --url "${NIRMATA_URL}" \
             --token "$NIRMATA_TEAM_TOKEN" \
-            --publish
+            --publish \
+          || echo "WARNING: NCH publish failed — continuing so the violation summary is still shown."
       fi
 
     # Parse violations from the scan report
