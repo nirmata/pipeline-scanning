@@ -78,7 +78,7 @@ helm-policy-scan:
         # nctl scan repository ./ \
         #   --publish-token "$NIRMATA_TEAM_TOKEN" \
         #   --policies "$POLICIES_PATH" || true
-        git clone https://gitlab.com/sagar-nirmata/pipeline-scanning.git pipeline-scanning
+        git clone https://github.com/nirmata/pipeline-scanning.git pipeline-scanning
         cd pipeline-scanning && git checkout kyverno-policies && cd ..
         nctl scan repository \
             --policies="pipeline-scanning/policies" \
