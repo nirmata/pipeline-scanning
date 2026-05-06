@@ -197,7 +197,7 @@ remediator:
       resources:
         - name: nginx-all-fixes
           repo: https://gitlab.com/sagar-nirmata/pipeline-scanning.git
-          path: ./
+          path: charts/my-nginx-chart
           ref: helm-app
           policyRefs:
             - seccomp-policy
