@@ -180,9 +180,8 @@ helm-policy-scan:
         echo ""
         echo "  ════════════════════════════════════════════════════════"
 
-        # Fail the pipeline
-        SCAN_EXIT=$(grep SCAN_EXIT scan-meta.env | cut -d= -f2 || echo 1)
-        exit ${SCAN_EXIT:-1}
+        # Fail the pipeline because violations were detected
+        exit 1
       else
         echo ""
         echo "  ✅ No violations found — chart is compliant"
