@@ -6,10 +6,18 @@ crds:
 replicaCount: 1
 
 image:
-  repository: reg.nirmata.io/nirmata/go-nirmata-agent
+  # HelmMapper-on-GitLab fix (PR nirmata/go-service-agent#402, merged into main).
+  # Built from commit 7fd5f44 with `ko build`. Tag `helm-mapper-fix` is stable;
+  # tag `7fd5f44` pins to the exact commit. Multi-arch (linux/amd64,arm64).
+  repository: ghcr.io/nsagark/go-nirmata-agent
+  tag: helm-mapper-fix
   pullPolicy: IfNotPresent
 
-imagePullSecrets: []
+# Pull the agent image from a private GHCR package. The remediator-pipeline.yml
+# creates the `ghcr-pull-secret` docker-registry secret in the nirmata namespace
+# from the GHCR_TOKEN CI/CD variable before helm install.
+imagePullSecrets:
+  - name: ghcr-pull-secret
 nameOverride: ""
 fullnameOverride: ""
 
@@ -197,7 +205,7 @@ remediator:
       resources:
         - name: nginx-all-fixes
           repo: https://gitlab.com/sagar-nirmata/pipeline-scanning.git
-          path: charts/my-nginx-chart
+          path: ./
           ref: helm-app
           policyRefs:
             - seccomp-policy

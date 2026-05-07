@@ -6,6 +6,8 @@
 #   NIRMATA_SERVICE_ACCOUNT_TOKEN — Nirmata service account token (masked)
 #   PAT                           — GitLab Personal Access Token (masked)
 #                                   Required scopes: api, read_repository, write_repository
+#   GHCR_TOKEN                    — GitHub PAT with read:packages scope (masked)
+#                                   Used to pull the private agent image from ghcr.io
 #
 # Policy groups (set POLICY_GROUP variable):
 #   "All violations"              — fixes seccomp + resource limits in one MR
@@ -141,6 +143,7 @@ install-remediator:
 
     # Create nirmata namespace and secrets
     - |
+      export PATH="$HOME/bin:$PATH"
       kubectl create namespace nirmata
 
       kubectl create secret generic nirmata-service-account-token \
@@ -150,6 +153,21 @@ install-remediator:
       # GitLab PAT must have at least: api, read_repository, write_repository scopes
       kubectl create secret generic gitlab-pat-token \
         --from-literal=token="${PAT}" \
+        -n nirmata
+
+      # GHCR pull secret for the private agent image
+      # (ghcr.io/nsagark/go-nirmata-agent — built from PR #402, see remediator-helm-values.yaml)
+      # GHCR_TOKEN is a GitHub PAT with read:packages scope.
+      if [ -z "${GHCR_TOKEN:-}" ]; then
+        echo "ERROR: GHCR_TOKEN is not set — required to pull the private agent image." >&2
+        echo "Add it under Settings > CI/CD > Variables (GitHub PAT with read:packages scope)." >&2
+        exit 1
+      fi
+      kubectl create secret docker-registry ghcr-pull-secret \
+        --docker-server=ghcr.io \
+        --docker-username=nsagark \
+        --docker-password="${GHCR_TOKEN}" \
+        --docker-email=ci@example.com \
         -n nirmata
 
       kubectl create configmap repo-namespace-mapping \
