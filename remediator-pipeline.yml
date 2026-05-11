@@ -1,4 +1,4 @@
-# Child pipeline: deploys the Nirmata agent (nirmata/nirmata-agent chart, --devel)
+# Child pipeline: deploys the Nirmata agent (nirmata/nirmata-agent chart, --devel).
 # on a local kind cluster, configured for GitLab (tool.type=gitlab).
 # The agent scans Helm chart resources against VCS policies and creates Merge Requests with fixes.
 #
