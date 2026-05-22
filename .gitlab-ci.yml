@@ -87,6 +87,7 @@ helm-policy-scan:
       else
         nctl scan repository ./ \
             --publish-token "$NIRMATA_TEAM_TOKEN" \
+            --url "$NIRMATA_URL" \
             --policies="${POLICIES_PATH}" \
           || echo "WARNING: NCH publish failed — continuing so the violation summary is still shown."
       fi
@@ -231,3 +232,4 @@ trigger-remediator:
   trigger:
     include: remediator-pipeline.yml
     strategy: depend
+
