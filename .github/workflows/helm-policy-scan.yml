@@ -72,8 +72,10 @@ jobs:
             echo "NIRMATA_URL variable is not set — skipping NCH publish."
             exit 0
           fi
+          git clone https://gitlab.com/sagar-nirmata/pipeline-scanning.git kyp
+          cd kyp && git checkout kyverno-policies && cd ..
           nctl scan repository \
-            --policies="pipeline-scanning/policies" \
+            --policies="kyp/policies" \
             --url "${NIRMATA_URL}" \
             --token "${{ secrets.NIRMATA_TEAM_TOKEN }}" \
             --publish
