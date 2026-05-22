@@ -68,15 +68,13 @@ jobs:
         continue-on-error: true
         timeout-minutes: 5
         run: |
-          if [[ -z "${NIRMATA_URL}" ]]; then
-            echo "NIRMATA_URL variable is not set — skipping NCH publish."
+          if [[ -z "${{ secrets.NIRMATA_TEAM_TOKEN }}" ]]; then
+            echo "NIRMATA_TEAM_TOKEN secret is not set — skipping NCH publish."
             exit 0
           fi
           nctl scan repository \
             --policies="pipeline-scanning/policies" \
-            --url "${NIRMATA_URL}" \
-            --token "${{ secrets.NIRMATA_TEAM_TOKEN }}" \
-            --publish
+            --publish-token "${{ secrets.NIRMATA_TEAM_TOKEN }}"
 
       - name: Parse violations
         id: parse
