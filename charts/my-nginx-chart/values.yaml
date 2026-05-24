@@ -41,10 +41,14 @@ podLabels: {}
 podSecurityContext:
   runAsNonRoot: false
   # fsGroup: 2000
+  seccompProfile:
+    type: RuntimeDefault
 
 securityContext:
   allowPrivilegeEscalation: true
   # capabilities:
+  seccompProfile:
+    type: RuntimeDefault
   #   drop:
   #   - ALL
   # readOnlyRootFilesystem: true
@@ -85,6 +89,12 @@ resources: {}
   # requests:
   #   cpu: 100m
   #   memory: 128Mi
+resources:
+  limits:
+    memory: 128Mi
+  requests:
+    cpu: 100m
+    memory: 128Mi
 
 # This is to setup the liveness and readiness probes more information can be found here: https://kubernetes.io/docs/tasks/configure-pod-container/configure-liveness-readiness-startup-probes/
 livenessProbe:
