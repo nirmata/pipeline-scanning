@@ -74,10 +74,11 @@ jobs:
           fi
           git clone https://gitlab.com/sagar-nirmata/pipeline-scanning.git kyp
           cd kyp && git checkout kyverno-policies && cd ..
+          nctl login --url "${NIRMATA_URL}" --userid sagarkundral777@gmail.com --token ${{ secrets.NIRMATA_USER_TOKEN }}
           nctl scan repository \
             --policies="kyp/policies" \
             --url "${NIRMATA_URL}" \
-            --token "${{ secrets.NIRMATA_TEAM_TOKEN }}" \
+            --publish-token "${{ secrets.NIRMATA_TEAM_TOKEN }}" \
             --publish
 
       - name: Parse violations
