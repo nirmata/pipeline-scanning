@@ -1,4 +1,4 @@
-# Scans the Helm chart on helm-app branch against custom policies
+# Scans the Helm chart on helm-app branch against custom policies.
 # from the kyverno-policies branch (policies/seccomp, policies/resource-limits).
 # Publishes results to NCH, then shows per-violation action buttons:
 #   ▶ Fix           — triggers the remediator agent to open a fix PR
