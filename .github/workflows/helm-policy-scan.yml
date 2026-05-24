@@ -75,7 +75,7 @@ jobs:
           fi
           nctl scan repository \
             --policies="pipeline-scanning/policies" \
-            --publish-token "${TOKEN}"
+            --publish-token "${TOKEN}" < /dev/null
 
       - name: Parse violations
         id: parse
