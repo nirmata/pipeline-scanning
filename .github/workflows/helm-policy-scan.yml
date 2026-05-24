@@ -74,7 +74,7 @@ jobs:
             echo "NIRMATA_TEAM_TOKEN secret is not set — skipping NCH publish."
             exit 0
           fi
-          nctl login --token "${{ secrets.NIRMATA_USER_TOKEN }}"
+          nctl login --url "${NIRMATA_URL}" --userid "${{ vars.NIRMATA_USERID }}" --token "${{ secrets.NIRMATA_USER_TOKEN }}"
           nctl scan repository \
             --policies="pipeline-scanning/policies" \
             --publish-token "${TOKEN}"
