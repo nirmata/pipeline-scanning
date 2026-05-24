@@ -27,6 +27,7 @@ env:
   POLICIES_BRANCH: kyverno-policies
   POLICIES_PATH: policies
   NIRMATA_URL: ${{ vars.NIRMATA_URL }}
+  NIRMATA_TOKEN: ${{ secrets.NIRMATA_USER_TOKEN }}
   REMEDIATION_WORKFLOW_URL: https://github.com/${{ github.repository }}/actions/workflows/install-remediator.yml
 
 jobs:
@@ -73,10 +74,9 @@ jobs:
             echo "NIRMATA_TEAM_TOKEN secret is not set — skipping NCH publish."
             exit 0
           fi
-          nctl login --url https://www.nirmata.io --userid sagarkundral777@gmail.com --token ${{ secrets.NIRMATA_USER_TOKEN }}
           nctl scan repository \
             --policies="pipeline-scanning/policies" \
-            --publish-token "${TOKEN}" < /dev/null
+            --publish-token "${TOKEN}"
 
       - name: Parse violations
         id: parse
