@@ -89,7 +89,7 @@ helm-policy-scan:
         git checkout "$CI_COMMIT_BRANCH"
         nctl login --url "$NIRMATA_URL" --userid "sagarkundral777@gmail.com" --token "$NIRMATA_USER_TOKEN"
         nctl scan repository ./ \
-            --publish-token "$NIRMATA_TEAM_TOKEN" \
+            --publish-token "$NIRMATA_TEAM_TOKEN" --branch="helm-app" \
             --policies="${POLICIES_PATH}" \
           || echo "WARNING: NCH publish failed — continuing so the violation summary is still shown."
       fi
