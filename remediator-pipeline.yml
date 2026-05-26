@@ -302,8 +302,9 @@ install-remediator:
       echo "=== Namespace events ==="
       kubectl get events -n nirmata --sort-by='.lastTimestamp' 2>/dev/null | tail -30 || true
       echo ""
-      echo "=== Cleanup: deleting kind cluster ==="
-      kind delete cluster --name remediator-demo 2>/dev/null || true
+      echo "=== Cleanup: kind cluster kept alive for @nirmatabot event polling ==="
+      echo "    Agent polls GitLab for MR comments every 1 minute."
+      echo "    To tear down manually on the EC2 runner: kind delete cluster --name remediator-demo"
 
   artifacts:
     when: on_failure
