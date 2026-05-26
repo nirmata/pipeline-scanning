@@ -86,13 +86,11 @@ helm-policy-scan:
       if [ -z "${NIRMATA_TEAM_TOKEN:-}" ]; then
         echo "NIRMATA_TEAM_TOKEN not set — skipping NCH publish."
       else
-        echo "=== NIRMATA env var names present ==="
-        env | grep -i nirmata | cut -d= -f1 | sort || true
+        unset NIRMATA_SERVICE_ACCOUNT_TOKEN
+        nctl login --url "$NIRMATA_URL" --userid "sagarkundral777@gmail.com" --token "$NIRMATA_USER_TOKEN"
         nctl scan repository ./ \
-            --url "$NIRMATA_URL" \
             --publish-token "$NIRMATA_TEAM_TOKEN" \
             --policies="${POLICIES_PATH}" \
-            -v 6 \
           || echo "WARNING: NCH publish failed — continuing so the violation summary is still shown."
       fi
 
