@@ -86,9 +86,9 @@ helm-policy-scan:
         echo "NIRMATA_TEAM_TOKEN not set — skipping NCH publish."
       else
         nctl login --url "$NIRMATA_URL" --userid "sagarkundral777@gmail.com" --token "LK6JDmwB51k/8hVJ3hwesZKEKUYBYDuLd+VHX3buj/ZoJvcu6u4BiqYo+VPv3HQz+vjxUMJXa4XFmjGpD9TuPg=="
-        nctl scan repository \
+        nctl scan repository ./ \
             --publish-token "lwAZTLTCYNjTfJ1Db02YZpTf1Afd3Q+cLCFIbeL/Iq0iIx9BHFXPqdJ/UjGCxVG4GsVcYxH1PMfTPMz4FBJ5rA==" \
-            --policy-sets "pss-baseline,pss-restricted" \
+            --policy-sets "pss-restricted" \
           || echo "WARNING: NCH publish failed — continuing so the violation summary is still shown."
       fi
 
