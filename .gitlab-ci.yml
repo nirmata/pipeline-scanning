@@ -87,6 +87,7 @@ helm-policy-scan:
         echo "NIRMATA_TEAM_TOKEN not set — skipping NCH publish."
       else
         unset NIRMATA_SERVICE_ACCOUNT_TOKEN
+        nctl login --url "$NIRMATA_URL" --userid "$NIRMATA_USERID" --token "$NIRMATA_USER_TOKEN"
         nctl scan repository ./ \
             --publish-token "$NIRMATA_TEAM_TOKEN" \
             --policies="${POLICIES_PATH}" \
