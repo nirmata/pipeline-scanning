@@ -132,7 +132,7 @@ llm:
 
 nirmata:
   # Nirmata endpoint URL - used to set the --url command-line flag
-  endpoint: "https://nirmata.io"
+  endpoint: "https://devtest2.nirmata.co"
 
   # Authentication method selection
   # Options: "serviceAccountToken" or "apiToken"
