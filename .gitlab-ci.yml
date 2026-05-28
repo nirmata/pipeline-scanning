@@ -88,10 +88,10 @@ helm-policy-scan:
       else
         unset NIRMATA_SERVICE_ACCOUNT_TOKEN
         nctl login --url "$NIRMATA_URL" --userid "$NIRMATA_USERID" --token "$NIRMATA_USER_TOKEN"
+        git checkout -B "${CI_MERGE_REQUEST_SOURCE_BRANCH_NAME:-$CI_COMMIT_REF_NAME}"
         nctl scan repository ./ \
             --publish-token "$NIRMATA_TEAM_TOKEN" \
             --policies="${POLICIES_PATH}" \
-            --branch "${CI_MERGE_REQUEST_SOURCE_BRANCH_NAME:-$CI_COMMIT_REF_NAME}" \
           || echo "WARNING: NCH publish failed — continuing so the violation summary is still shown."
       fi
 
