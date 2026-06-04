@@ -1,4 +1,4 @@
-# Scans the Helm chart on helm-app branch against custom policies
+# Scans the Helm chart on helm-app branch against custom policies.
 # from the kyverno-policies branch (policies/seccomp, policies/resource-limits).
 # Publishes results to NCH, then shows per-violation action buttons:
 #   ▶ Fix           — triggers the remediator agent to open a fix PR
@@ -27,6 +27,7 @@ env:
   POLICIES_BRANCH: kyverno-policies
   POLICIES_PATH: policies
   NIRMATA_URL: ${{ vars.NIRMATA_URL }}
+  NIRMATA_TOKEN: ${{ secrets.NIRMATA_USER_TOKEN }}
   REMEDIATION_WORKFLOW_URL: https://github.com/${{ github.repository }}/actions/workflows/install-remediator.yml
 
 jobs:
@@ -73,15 +74,15 @@ jobs:
         continue-on-error: true
         timeout-minutes: 5
         run: |
-          if [[ -z "${NIRMATA_URL}" ]]; then
-            echo "NIRMATA_URL variable is not set — skipping NCH publish."
+          TOKEN="${{ secrets.NIRMATA_TEAM_TOKEN }}"
+          if [[ -z "${TOKEN}" ]]; then
+            echo "NIRMATA_TEAM_TOKEN secret is not set — skipping NCH publish."
             exit 0
           fi
+          nctl login --url "${NIRMATA_URL}" --userid "${{ vars.NIRMATA_USERID }}" --token "${{ secrets.NIRMATA_USER_TOKEN }}"
           nctl scan repository \
             --policies="pipeline-scanning/policies" \
-            --url "${NIRMATA_URL}" \
-            --token "${{ secrets.NIRMATA_TEAM_TOKEN }}" \
-            --publish
+            --publish-token "${TOKEN}"
 
       - name: Parse violations
         id: parse
@@ -106,9 +107,12 @@ jobs:
                 })
               ) | flatten
             ) | flatten | .[]
-          ' report.json > violations.json 2>/dev/null || echo '[]' > violations.json
+          ' report.json > violations.json
 
-          COUNT=$(jq -s 'length' violations.json 2>/dev/null || echo 0)
+          COUNT=0
+          if [[ -s violations.json ]]; then
+            COUNT=$(jq -s 'length' violations.json)
+          fi
           echo "violations_count=${COUNT}" >> "$GITHUB_OUTPUT"
           if [[ "${COUNT}" -gt 0 ]]; then
             echo "violations_found=true" >> "$GITHUB_OUTPUT"
@@ -133,17 +137,28 @@ jobs:
             echo ""
           } >> "$GITHUB_STEP_SUMMARY"
 
-          # Build the NCH exception URL for this repository
-          ENCODED_REPO=$(python3 -c "import urllib.parse; print(urllib.parse.quote('${POLICIES_REPO}', safe=''))")
-          NCH_EXCEPTION_URL="${NIRMATA_URL}/webclient/#clusters/policyReport/repositoryDetails?repo=${ENCODED_REPO}&backurl=clustersPolicyReport%2Frepositories&filter.status.value=fail"
+          # Build the NCH findings URL for this repository (works for any repo name).
+          # For nirmata.io (cloud SaaS), the webclient is served from www.nirmata.io.
+          # A server-side redirect from nirmata.io/webclient/ → www.nirmata.io/webclient/
+          # drops the hash fragment, so we link directly to www.nirmata.io to avoid it.
+          # Enterprise installs use NIRMATA_URL as-is (no www. redirect).
+          REPO_URL="https://github.com/${{ github.repository }}"
+          ENCODED_REPO=$(python3 -c "import urllib.parse; print(urllib.parse.quote('${REPO_URL}', safe=''))")
+          if [[ "${NIRMATA_URL}" =~ ://nirmata\.io(/|$) ]]; then
+            WEBCLIENT_BASE="https://www.nirmata.io"
+          else
+            WEBCLIENT_BASE="${NIRMATA_URL}"
+          fi
+          NCH_EXCEPTION_URL="${WEBCLIENT_BASE}/webclient/#policy-reports/repositories/${ENCODED_REPO}/findings"
+          NCH_LOGIN_URL="${NIRMATA_URL}/security/"
 
           if [[ "${{ steps.parse.outputs.violations_found }}" == "true" ]]; then
             {
               echo "### ❌ ${{ steps.parse.outputs.violations_count }} violation(s) detected"
               echo ""
               echo "For each violation, choose an action:"
-              echo "- **▶ Fix** — triggers the remediator agent to open a PR with an automated fix"
-              echo "- **🔒 Exception** — opens NCH where you can log in and request a policy exception"
+              echo "- **🛠️ Fix a violation** — triggers the remediator agent to open a PR with an automated fix"
+              echo "- **📋 File an Exception** — opens the NCH findings page for this repository so developers can file policyexceptions for their violations"
               echo ""
               echo "| Violation | Policy | Rule | Severity | Actions |"
               echo "|---|---|---|---|---|"
@@ -164,7 +179,7 @@ jobs:
                   *)           label="All violations" ;;
                 esac
 
-                echo "| \`${res}\` | \`${pol}\` | \`${rule}\` | ${sev} | [▶ Fix](${WORKFLOW_URL}) · [🔒 Exception](${NCH_EXCEPTION_URL}) |" \
+                echo "| \`${res}\` | \`${pol}\` | \`${rule}\` | ${sev} | [🛠️ Fix a violation](${WORKFLOW_URL}) &nbsp;**OR**&nbsp; [📋 File an Exception](${NCH_EXCEPTION_URL}) |" \
                   >> "$GITHUB_STEP_SUMMARY"
               done
 
@@ -173,8 +188,8 @@ jobs:
               echo "---"
               echo "### How to act on a violation"
               echo ""
-              echo "#### Option 1 — Automated fix (opens a PR)"
-              echo "1. Click **▶ Fix** for the violation you want to fix"
+              echo "#### Option 1 — 🛠️ Fix a violation (opens a PR)"
+              echo "1. Click **🛠️ Fix a violation** for the violation you want to fix"
               echo "2. Click **Run workflow** (top-right of the remediator page)"
               echo "3. Select the matching **Policy group** from the dropdown"
               echo "4. Click **Run workflow** — the agent creates a PR with the fix"
@@ -185,11 +200,10 @@ jobs:
               echo "| **Resource limit violations** | \`require-requests-limits\` — adds CPU/memory requests and limits |"
               echo "| **All violations** | Fixes both in a single PR |"
               echo ""
-              echo "#### Option 2 — Policy exception (via NCH)"
-              echo "1. Click **🔒 Exception** for the violation you want to exempt"
-              echo "2. Log in to NCH when prompted"
-              echo "3. Select the violation and submit an exception request"
-              echo "4. Once approved, the exception will be applied and future scans will pass"
+              echo "#### Option 2 — 📋 File an Exception (via NCH)"
+              echo "1. Click **📋 File an Exception** — you will land directly on the findings page for this repository"
+              echo "2. Select the violation and submit an exception request"
+              echo "3. Once approved, the exception will be applied and future scans will pass"
             } >> "$GITHUB_STEP_SUMMARY"
 
           else
