@@ -25,6 +25,8 @@ on:
           - All violations
           - Seccomp violations
           - Resource limit violations
+          - PSS Baseline violations
+          - PSS Restricted violations
 
 permissions:
   contents: read

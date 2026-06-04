@@ -208,6 +208,14 @@ remediator:
           repo: https://github.com/nirmata/pipeline-scanning
           path: policies/resource-limits
           ref: kyverno-policies
+        - name: baseline-policy
+          repo: https://github.com/nirmata/pipeline-scanning
+          path: policies/baseline
+          ref: kyverno-policies
+        - name: restricted-policy
+          repo: https://github.com/nirmata/pipeline-scanning
+          path: policies/restricted
+          ref: kyverno-policies
       resources:
         - name: nginx-all-fixes
           repo: https://github.com/nirmata/pipeline-scanning
@@ -216,6 +224,8 @@ remediator:
           policyRefs:
             - seccomp-policy
             - resource-limits-policy
+            - baseline-policy
+            - restricted-policy
   remediation:
     schedule: "*/5 * * * *"
     eventPolling:
