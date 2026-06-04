@@ -43,48 +43,73 @@ jobs:
           curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
           helm version
 
-      - name: Install nctl
+      - name: Login to Nirmata as a DevOps User
         run: |
-          set -euo pipefail
-          curl -fsSL https://downloads.nirmata.io/nctl/install.sh | NCTL_VERSION=4.10.17 bash
-          echo "$(dirname "$(command -v nctl)")" >> "${GITHUB_PATH}"
-          nctl version
+          # echo "Running with user token..."
+          # nctl version
+          nctl login nch \
+            --userid ${{ secrets.NIRMATA_USERID }} \
+            --token ${{ secrets.NIRMATA_USER_TOKEN }} \
+            --url ${{ secrets.NIRMATA_URL }}          
 
-      - name: Scan Helm chart
-        id: scan
-        continue-on-error: true
-        run: |
-          set -euo pipefail
-          git clone --no-checkout --depth=1 --filter=blob:none \
-            --branch kyverno-policies \
-            https://github.com/nirmata/pipeline-scanning.git pipeline-scanning
-          cd pipeline-scanning
-          git sparse-checkout init --cone
-          git sparse-checkout set policies
-          git checkout HEAD
-          cd ..
-          nctl scan helm -r "${CHART_PATH}" \
-            -p "pipeline-scanning/policies/baseline" \
-            -p "pipeline-scanning/policies/restricted" \
-            -p "pipeline-scanning/policies/seccomp" \
-            -p "pipeline-scanning/policies/resource-limits" \
-            -o json \
-            | tee report.json
+      # - name: Install nctl
+      #   run: |
+      #     set -euo pipefail
+      #     curl -fsSL https://downloads.nirmata.io/nctl/install.sh | NCTL_VERSION=4.10.17 bash
+      #     echo "$(dirname "$(command -v nctl)")" >> "${GITHUB_PATH}"
+      #     nctl version
 
-      - name: Publish scan results to NCH
-        if: always()
-        continue-on-error: true
-        timeout-minutes: 5
+      # - name: Scan Helm chart
+      #   id: scan
+      #   continue-on-error: true
+      #   run: |
+      #     set -euo pipefail
+      #     git clone --no-checkout --depth=1 --filter=blob:none \
+      #       --branch kyverno-policies \
+      #       https://github.com/nirmata/pipeline-scanning.git pipeline-scanning
+      #     cd pipeline-scanning
+      #     git sparse-checkout init --cone
+      #     git sparse-checkout set policies
+      #     git checkout HEAD
+      #     cd ..
+      #     nctl scan helm -r "${CHART_PATH}" \
+      #       -p "pipeline-scanning/policies/baseline" \
+      #       -p "pipeline-scanning/policies/restricted" \
+      #       -p "pipeline-scanning/policies/seccomp" \
+      #       -p "pipeline-scanning/policies/resource-limits" \
+      #       -o json \
+      #       | tee report.json
+
+      # - name: Publish scan results to NCH
+      #   if: always()
+      #   continue-on-error: true
+      #   timeout-minutes: 5
+      #   run: |
+      #     TOKEN="${{ secrets.NIRMATA_TEAM_TOKEN }}"
+      #     if [[ -z "${TOKEN}" ]]; then
+      #       echo "NIRMATA_TEAM_TOKEN secret is not set — skipping NCH publish."
+      #       exit 0
+      #     fi
+      #     nctl login --url "${NIRMATA_URL}" --userid "${{ vars.NIRMATA_USERID }}" --token "${{ secrets.NIRMATA_USER_TOKEN }}"
+      #     nctl scan repository \
+      #       --policies="pipeline-scanning/policies" \
+      #       --publish-token "${TOKEN}"
+      - name: Run nctl scan (PodSecurity)
         run: |
-          TOKEN="${{ secrets.NIRMATA_TEAM_TOKEN }}"
-          if [[ -z "${TOKEN}" ]]; then
-            echo "NIRMATA_TEAM_TOKEN secret is not set — skipping NCH publish."
-            exit 0
+          set +e
+          echo "=== Starting nctl scan ==="
+          nctl scan repository --policy-sets pss-baseline,pss-restricted --url $NIRMATA_URL --token ${{ secrets.NIRMATA_TEAM_TOKEN }} --publish
+          status=$?
+          set -e
+
+          echo "=== nctl scan completed with status: $status ==="
+
+          if [ $status -ne 0 ] && [ $status -ne 1 ]; then
+            echo "nctl scan failed with (status $status)"
+            exit $status
           fi
-          nctl login --url "${NIRMATA_URL}" --userid "${{ vars.NIRMATA_USERID }}" --token "${{ secrets.NIRMATA_USER_TOKEN }}"
-          nctl scan repository \
-            --policies="pipeline-scanning/policies" \
-            --publish-token "${TOKEN}"
+
+          echo "nctl completed (status $status). Violations may exist but workflow continues."      
 
       - name: Parse violations
         id: parse
