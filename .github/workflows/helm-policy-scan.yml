@@ -174,14 +174,7 @@ jobs:
                 rule="$(echo "$rule" | xargs)"
                 sev="$(echo "$sev" | xargs)"
 
-                # Map remediatable policies to their dropdown; PSS-only policies get exception link only
-                case "${pol}" in
-                  *restrict-seccomp-strict*) fix_link="[🛠️ Fix](${WORKFLOW_URL}) &nbsp;**OR**&nbsp; " ;;
-                  *resource*|*limit*|*request*) fix_link="[🛠️ Fix](${WORKFLOW_URL}) &nbsp;**OR**&nbsp; " ;;
-                  *) fix_link="" ;;
-                esac
-
-                echo "| \`${res}\` | \`${pol}\` | \`${rule}\` | ${sev} | ${fix_link}[📋 Exception](${NCH_EXCEPTION_URL}) |" \
+                echo "| \`${res}\` | \`${pol}\` | \`${rule}\` | ${sev} | [🛠️ Fix a violation](${WORKFLOW_URL}) &nbsp;**OR**&nbsp; [📋 File an Exception](${NCH_EXCEPTION_URL}) |" \
                   >> "$GITHUB_STEP_SUMMARY"
               done
 
@@ -190,25 +183,22 @@ jobs:
               echo "---"
               echo "### How to act on a violation"
               echo ""
-              echo "#### Option 1 — 🛠️ Fix (auto-remediatable policies only)"
-              echo "The 🛠️ Fix link appears only for violations where automated remediation is available."
+              echo "#### Option 1 — 🛠️ Fix a violation (opens a PR)"
+              echo "1. Click **🛠️ Fix a violation** for the violation you want to fix"
+              echo "2. Click **Run workflow** (top-right of the remediator page)"
+              echo "3. Select the matching **Policy group** from the dropdown"
+              echo "4. Click **Run workflow** — the agent creates a PR with the fix"
               echo ""
-              echo "| Policy | Remediator action |"
+              echo "| Policy group | Fixes |"
               echo "|---|---|"
-              echo "| \`restrict-seccomp-strict\` | Adds \`seccompProfile: RuntimeDefault\` to pod/container specs |"
-              echo "| \`require-requests-limits\` | Adds CPU/memory requests and limits to all containers |"
+              echo "| **Seccomp violations** | \`restrict-seccomp-strict\` — adds \`seccompProfile: RuntimeDefault\` |"
+              echo "| **Resource limit violations** | \`require-requests-limits\` — adds CPU/memory requests and limits |"
+              echo "| **All violations** | Fixes both in a single PR |"
               echo ""
-              echo "1. Click **🛠️ Fix** next to the violation"
-              echo "2. Click **Run workflow** → select the matching policy group → **Run workflow**"
-              echo "3. The agent opens a PR with the fix"
-              echo ""
-              echo "#### Option 2 — 📋 Exception (all policies)"
-              echo "PSS baseline/restricted violations that have no automated fix (privilege escalation,"
-              echo "runAsNonRoot, capabilities, etc.) can be exception-tracked in NCH."
-              echo ""
-              echo "1. Click **📋 Exception** — lands on the NCH findings page for this repository"
+              echo "#### Option 2 — 📋 File an Exception (via NCH)"
+              echo "1. Click **📋 File an Exception** — you will land directly on the findings page for this repository"
               echo "2. Select the violation and submit an exception request"
-              echo "3. Once approved, future scans will pass for that violation"
+              echo "3. Once approved, the exception will be applied and future scans will pass"
             } >> "$GITHUB_STEP_SUMMARY"
 
           else
