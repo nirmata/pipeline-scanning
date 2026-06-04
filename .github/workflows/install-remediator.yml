@@ -6,7 +6,6 @@
 # Required secrets:
 #   NIRMATA_SERVICE_ACCOUNT_TOKEN — Nirmata service account token
 #   PAT                           — GitHub Personal Access Token (for CreatePR action)
-#   GHCR_TOKEN                    — GitHub PAT with read:packages scope (to pull the agent image)
 #
 # Policy groups are defined in policies/manifest.yaml on the kyverno-policies branch.
 # To add a new policy: add the policy file, update manifest.yaml, add an option to the
@@ -155,15 +154,6 @@ jobs:
         run: |
           kubectl create secret generic github-pat-token \
             --from-literal=token="${{ secrets.PAT }}" \
-            -n nirmata
-
-      - name: Create GHCR pull secret
-        run: |
-          kubectl create secret docker-registry ghcr-pull-secret \
-            --docker-server=ghcr.io \
-            --docker-username="${{ github.actor }}" \
-            --docker-password="${{ secrets.GHCR_TOKEN }}" \
-            --docker-email=ci@example.com \
             -n nirmata
 
       - name: Create repo-namespace-mapping ConfigMap
