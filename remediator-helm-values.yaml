@@ -234,7 +234,7 @@ remediator:
     schedule: "*/5 * * * *"
     eventPolling:
       enabled: true
-      # intervalMinutes: 5  # Optional: polling interval in minutes (default: 5)
+      intervalMinutes: 1
     actions:
       - type: CreatePR
         toolRefName: github-tool
