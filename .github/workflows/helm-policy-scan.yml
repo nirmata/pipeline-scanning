@@ -55,9 +55,9 @@ jobs:
           # echo "Running with user token..."
           # nctl version
           nctl login nch \
-            --userid ${{ secrets.NIRMATA_USERID }} \
+            --userid ${{ vars.NIRMATA_USERID }} \
             --token ${{ secrets.NIRMATA_USER_TOKEN }} \
-            --url ${{ secrets.NIRMATA_URL }}          
+            --url ${{ vars.NIRMATA_URL }}         
 
       # - name: Install nctl
       #   run: |
