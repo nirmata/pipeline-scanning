@@ -161,7 +161,7 @@ jobs:
         run: |
           kubectl create secret docker-registry ghcr-pull-secret \
             --docker-server=ghcr.io \
-            --docker-username=nsagark \
+            --docker-username="${{ github.actor }}" \
             --docker-password="${{ secrets.GHCR_TOKEN }}" \
             --docker-email=ci@example.com \
             -n nirmata
