@@ -43,6 +43,13 @@ jobs:
           curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
           helm version
 
+      - name: Install nctl
+        run: |
+          set -euo pipefail
+          curl -fsSL https://downloads.nirmata.io/nctl/install.sh | NCTL_VERSION=4.10.17 bash
+          echo "$(dirname "$(command -v nctl)")" >> "${GITHUB_PATH}"
+          nctl version          
+
       - name: Login to Nirmata as a DevOps User
         run: |
           # echo "Running with user token..."
