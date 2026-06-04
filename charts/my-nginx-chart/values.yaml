@@ -39,11 +39,18 @@ podAnnotations: {}
 podLabels: {}
 
 podSecurityContext:
-  runAsNonRoot: false
+  runAsNonRoot: true
+  seccompProfile:
+    type: RuntimeDefault
   # fsGroup: 2000
 
 securityContext:
-  allowPrivilegeEscalation: true
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop:
+    - ALL
+  seccompProfile:
+    type: RuntimeDefault
   # capabilities:
   #   drop:
   #   - ALL
@@ -74,7 +81,13 @@ ingress:
   #    hosts:
   #      - chart-example.local
 
-resources: {}
+resources:
+  limits:
+    cpu: 500m
+    memory: 512Mi
+  requests:
+    cpu: 250m
+    memory: 256Mi
   # We usually recommend not to specify default resources and to leave this as a conscious
   # choice for the user. This also increases chances charts run on environments with little
   # resources, such as Minikube. If you do want to specify resources, uncomment the following
