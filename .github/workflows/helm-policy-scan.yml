@@ -193,7 +193,6 @@ jobs:
               echo "|---|---|"
               echo "| **Seccomp violations** | \`restrict-seccomp-strict\` |"
               echo "| **Resource limit violations** | \`require-requests-limits\` |"
-              echo "| **PSS Baseline violations** | \`disallow-capabilities\`, \`disallow-host-namespaces\`, \`disallow-host-path\`, \`disallow-host-ports\`, \`disallow-privileged-containers\`, \`disallow-proc-mount\`, \`disallow-selinux\`, \`restrict-apparmor-profiles\`, \`restrict-seccomp\`, \`restrict-sysctls\` |"
               echo "| **PSS Restricted violations** | \`disallow-capabilities-strict\`, \`disallow-privilege-escalation\`, \`require-run-as-non-root-user\`, \`require-run-as-nonroot\`, \`restrict-volume-types\` |"
               echo "| **All violations** | All of the above |"
               echo ""
