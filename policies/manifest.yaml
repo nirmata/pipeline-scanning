@@ -12,3 +12,17 @@ policies:
     ref: kyverno-policies
     resourceName: nginx-resource-limits-fix
     branchPrefix: remediation-resource-limits-
+
+  - name: baseline-policy
+    displayName: "PSS Baseline violations"
+    path: policies/baseline
+    ref: kyverno-policies
+    resourceName: nginx-baseline-fix
+    branchPrefix: remediation-baseline-
+
+  - name: restricted-policy
+    displayName: "PSS Restricted violations"
+    path: policies/restricted
+    ref: kyverno-policies
+    resourceName: nginx-restricted-fix
+    branchPrefix: remediation-restricted-
