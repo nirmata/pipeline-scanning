@@ -6,10 +6,11 @@ crds:
 replicaCount: 1
 
 image:
-  # Using the nirmata-agent image with the HelmMapper fix (PR #402) which also
-  # enables nirmatabot commands (@nirmatabot split-pr / request-exception) in PR descriptions.
+  # nirmatabot-scope-fix: built from nirmata/go-service-agent PR #415
+  # Fixes @nirmatabot request-exception scoping to specific policies instead of "All Violations".
+  # Includes all prior fixes (HelmMapper-on-GitHub, nirmatabot PR commands).
   repository: ghcr.io/nsagark/go-nirmata-agent
-  tag: helm-mapper-fix
+  tag: nirmatabot-scope-fix
   pullPolicy: IfNotPresent
 
 imagePullSecrets:
