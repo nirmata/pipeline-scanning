@@ -44,6 +44,7 @@ Configure these under **Settings → Secrets and variables → Actions**:
 | `NIRMATA_SERVICE_ACCOUNT_TOKEN` | Secret | Nirmata service account token — used by the remediator agent |
 | `PAT` | Secret | GitHub Personal Access Token with `repo` and `workflow` scopes — used by the remediator to open PRs |
 | `NIRMATA_URL` | **Variable** | NCH base URL, e.g. `https://nirmata.io` — must be a variable (not a secret) so it renders correctly in job summary links |
+| `NIRMATA_USERID` | **Variable** | Nirmata user ID — used by `nctl login` when publishing scan results to NCH |
 
 ---
 
