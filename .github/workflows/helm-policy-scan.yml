@@ -105,7 +105,7 @@ jobs:
         run: |
           set +e
           echo "=== Starting nctl scan ==="
-          nctl scan repository --policy-sets pss-baseline,pss-restricted --url $NIRMATA_URL --token ${{ secrets.NIRMATA_TEAM_TOKEN }} --publish
+          nctl scan repository --policy-sets pss-baseline,pss-restricted --url ${{ vars.NIRMATA_URL }} --token ${{ secrets.NIRMATA_TEAM_TOKEN }} --publish
           status=$?
           set -e
 
