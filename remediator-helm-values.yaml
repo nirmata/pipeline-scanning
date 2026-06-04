@@ -6,10 +6,14 @@ crds:
 replicaCount: 1
 
 image:
-  repository: ghcr.io/nirmata/go-agent-remediator
+  # Using the nirmata-agent image with the HelmMapper fix (PR #402) which also
+  # enables nirmatabot commands (@nirmatabot split-pr / request-exception) in PR descriptions.
+  repository: ghcr.io/nsagark/go-nirmata-agent
+  tag: helm-mapper-fix
   pullPolicy: IfNotPresent
 
-imagePullSecrets: []
+imagePullSecrets:
+  - name: ghcr-pull-secret
 nameOverride: ""
 fullnameOverride: ""
 

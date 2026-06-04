@@ -6,6 +6,7 @@
 # Required secrets:
 #   NIRMATA_SERVICE_ACCOUNT_TOKEN — Nirmata service account token
 #   PAT                           — GitHub Personal Access Token (for CreatePR action)
+#   GHCR_TOKEN                    — GitHub PAT with read:packages scope (to pull the agent image)
 #
 # Policy groups are defined in policies/manifest.yaml on the kyverno-policies branch.
 # To add a new policy: add the policy file, update manifest.yaml, add an option to the
@@ -39,7 +40,7 @@ jobs:
   install-remediator:
     name: Deploy remediator — ${{ inputs.policy_group }}
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 60
 
     steps:
       - name: Checkout helm-app branch
@@ -156,15 +157,25 @@ jobs:
             --from-literal=token="${{ secrets.PAT }}" \
             -n nirmata
 
+      - name: Create GHCR pull secret
+        run: |
+          kubectl create secret docker-registry ghcr-pull-secret \
+            --docker-server=ghcr.io \
+            --docker-username=nsagark \
+            --docker-password="${{ secrets.GHCR_TOKEN }}" \
+            --docker-email=ci@example.com \
+            -n nirmata
+
       - name: Create repo-namespace-mapping ConfigMap
         run: |
           kubectl create configmap repo-namespace-mapping \
             --from-literal=mapping='[]' \
             -n nirmata
 
-      - name: Clone kyverno-charts (remediator Helm chart)
+      - name: Add nirmata Helm repo
         run: |
-          git clone --depth=1 https://github.com/nirmata/kyverno-charts.git /tmp/kyverno-charts
+          helm repo add nirmata https://nirmata.github.io/kyverno-charts
+          helm repo update nirmata
 
       - name: Install remediator agent
         run: |
@@ -175,11 +186,11 @@ jobs:
             EXTRA_VALUES="--values ${{ steps.patch.outputs.patch_file }}"
           fi
 
-          helm upgrade --install remediator-agent /tmp/kyverno-charts/charts/go-agent-remediator \
+          helm upgrade --install nirmata-agent nirmata/nirmata-agent \
             --namespace nirmata \
             --values remediator-helm-values.yaml \
             ${EXTRA_VALUES} \
-            --set image.repository=ghcr.io/nirmata/go-agent-remediator \
+            --devel \
             --wait \
             --timeout 10m
           echo "Remediator agent installed successfully."
@@ -206,25 +217,24 @@ jobs:
 
       - name: Bounce agent to trigger immediate remediation cycle
         run: |
-          echo "Scaling down remediator agent..."
-          kubectl scale deployment remediator-agent -n nirmata --replicas=0
-          kubectl wait --for=delete pod -l app.kubernetes.io/instance=remediator-agent -n nirmata --timeout=60s
+          echo "Scaling down nirmata-agent..."
+          kubectl scale deployment nirmata-agent -n nirmata --replicas=0
+          kubectl wait --for=delete pod -l app.kubernetes.io/instance=nirmata-agent -n nirmata --timeout=60s
 
           echo "Deleting all RemediationRecord CRs..."
           kubectl delete remediationrecord --all -n nirmata 2>/dev/null || echo "(no RemediationRecords found)"
 
           echo "Scaling back up..."
-          kubectl scale deployment remediator-agent -n nirmata --replicas=1
-          kubectl wait --for=condition=ready pod -l app.kubernetes.io/instance=remediator-agent -n nirmata --timeout=120s
+          kubectl scale deployment nirmata-agent -n nirmata --replicas=1
+          kubectl wait --for=condition=ready pod -l app.kubernetes.io/instance=nirmata-agent -n nirmata --timeout=120s
           echo "Agent is back up."
 
-      - name: Tail agent logs until PR(s) created (max 8 minutes)
+      - name: Tail agent logs — wait for PR then open nirmatabot window
         run: |
-          # All policy groups produce one PR (single resource entry with all policyRefs)
           EXPECTED_PRS=1
-          echo "Waiting for ${EXPECTED_PRS} PR(s) to be created..."
+          echo "Phase 1: waiting for ${EXPECTED_PRS} PR(s) to be created (max 8 min)..."
 
-          POD=$(kubectl get pod -n nirmata -l app.kubernetes.io/instance=remediator-agent \
+          POD=$(kubectl get pod -n nirmata -l app.kubernetes.io/instance=nirmata-agent \
             -o jsonpath='{.items[0].metadata.name}')
           echo "Tailing logs from pod: ${POD}"
           echo "---"
@@ -241,13 +251,30 @@ jobs:
                 echo "${COUNT}" > "${TMPCOUNT}"
                 echo "--- PR ${COUNT}/${EXPECTED_PRS} created."
                 if [[ "${COUNT}" -ge "${EXPECTED_PRS}" ]]; then
-                  echo "All ${EXPECTED_PRS} PR(s) created. Stopping log tail."
+                  echo "All ${EXPECTED_PRS} PR(s) created. Entering nirmatabot window."
                   exit 0
                 fi
               fi
             done || true
+
           echo "---"
-          echo "Log tail ended (got $(cat "${TMPCOUNT}")/${EXPECTED_PRS} PR(s))."
+          PR_COUNT=$(cat "${TMPCOUNT}")
+          echo "Phase 1 complete (${PR_COUNT}/${EXPECTED_PRS} PR(s) created)."
+
+          if [[ "${PR_COUNT}" -ge "${EXPECTED_PRS}" ]]; then
+            echo ""
+            echo ">>> Phase 2: nirmatabot window open (20 min)."
+            echo ">>> Comment on the PR to trigger actions:"
+            echo ">>>   @nirmatabot split-pr <policy-name1> <policy-name2>"
+            echo ">>>   @nirmatabot request-exception <policy-name> [duration] [reason]"
+            echo ">>> Examples:"
+            echo ">>>   @nirmatabot split-pr disallow-privilege-escalation require-run-as-nonroot"
+            echo ">>>   @nirmatabot request-exception disallow-capabilities-strict 30d Approved by security team"
+            echo "---"
+            timeout 1200 kubectl logs -n nirmata "${POD}" --follow --since=10s 2>/dev/null || true
+            echo "---"
+            echo ">>> Nirmatabot window closed."
+          fi
 
       - name: Inspect remediation state
         if: always()
@@ -268,9 +295,9 @@ jobs:
         if: always()
         run: |
           STATUS="unknown"
-          if kubectl get deployment -n nirmata -l app.kubernetes.io/instance=remediator-agent &>/dev/null 2>&1; then
-            READY=$(kubectl get deployment -n nirmata -l app.kubernetes.io/instance=remediator-agent \
-              -o jsonpath='{.items[0].status.readyReplicas}' 2>/dev/null || echo "0")
+          if kubectl get deployment nirmata-agent -n nirmata &>/dev/null 2>&1; then
+            READY=$(kubectl get deployment nirmata-agent -n nirmata \
+              -o jsonpath='{.status.readyReplicas}' 2>/dev/null || echo "0")
             [[ "${READY}" -ge 1 ]] && STATUS="success" || STATUS="pending"
           else
             STATUS="failed"
@@ -284,7 +311,7 @@ jobs:
             echo "| Cluster      | \`remediator-demo\` (kind) |"
             echo "| Namespace    | \`nirmata\` |"
             echo "| Policy group | \`${{ inputs.policy_group }}\` |"
-            echo "| Chart        | \`go-agent-remediator\` from nirmata/kyverno-charts |"
+            echo "| Chart        | \`nirmata/nirmata-agent\` (--devel) |"
             echo ""
           } >> "$GITHUB_STEP_SUMMARY"
 
@@ -293,6 +320,16 @@ jobs:
               echo "### ✅ Remediator agent is running"
               echo ""
               echo "**Next step:** Check the [Pull Requests](https://github.com/${{ github.repository }}/pulls) tab for the remediation PR."
+              echo ""
+              echo "The PR description contains **nirmatabot commands** you can use by commenting on the PR:"
+              echo ""
+              echo "| Command | What it does |"
+              echo "|---|---|"
+              echo "| \`@nirmatabot split-pr <policy1> <policy2>\` | Splits a multi-policy PR into separate per-policy PRs |"
+              echo "| \`@nirmatabot request-exception <policy> [duration] [reason]\` | Requests a PolicyException in NCH for that policy |"
+              echo ""
+              echo "> **Note:** The nirmatabot window is open for **20 minutes** from PR creation."
+              echo "> Post your comment on the PR within that window."
             } >> "$GITHUB_STEP_SUMMARY"
           else
             {
