@@ -39,11 +39,15 @@ podAnnotations: {}
 podLabels: {}
 
 podSecurityContext:
-  runAsNonRoot: false
+  runAsNonRoot: true
+  seccompProfile:
+    type: RuntimeDefault
   # fsGroup: 2000
 
 securityContext:
-  allowPrivilegeEscalation: true
+  allowPrivilegeEscalation: false
+  seccompProfile:
+    type: RuntimeDefault
   # capabilities:
   #   drop:
   #   - ALL
