@@ -56,11 +56,12 @@ jobs:
         run: |
           set -euo pipefail
           git clone --no-checkout --depth=1 --filter=blob:none \
+            --branch kyverno-policies \
             https://github.com/nirmata/pipeline-scanning.git pipeline-scanning
           cd pipeline-scanning
           git sparse-checkout init --cone
           git sparse-checkout set policies
-          git -c advice.detachedHead=false checkout kyverno-policies
+          git checkout HEAD
           cd ..
           nctl scan helm -r "${CHART_PATH}" \
             -p "pipeline-scanning/policies/baseline" \
