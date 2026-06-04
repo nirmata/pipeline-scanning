@@ -46,7 +46,7 @@ jobs:
       - name: Install nctl
         run: |
           set -euo pipefail
-          curl -fsSL https://downloads.nirmata.io/nctl/install.sh | bash
+          curl -fsSL https://downloads.nirmata.io/nctl/install.sh | NCTL_VERSION=4.10.17 bash
           echo "$(dirname "$(command -v nctl)")" >> "${GITHUB_PATH}"
           nctl version
 
@@ -55,8 +55,13 @@ jobs:
         continue-on-error: true
         run: |
           set -euo pipefail
-          git clone https://github.com/nirmata/pipeline-scanning.git pipeline-scanning
-          cd pipeline-scanning && git checkout kyverno-policies && cd ..
+          git clone --no-checkout --depth=1 --filter=blob:none \
+            https://github.com/nirmata/pipeline-scanning.git pipeline-scanning
+          cd pipeline-scanning
+          git sparse-checkout init --cone
+          git sparse-checkout set policies
+          git -c advice.detachedHead=false checkout kyverno-policies
+          cd ..
           nctl scan helm -r "${CHART_PATH}" \
             -p "pipeline-scanning/policies/seccomp" \
             -p "pipeline-scanning/policies/resource-limits" \
