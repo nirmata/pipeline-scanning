@@ -101,6 +101,15 @@ jobs:
       #     nctl scan repository \
       #       --policies="pipeline-scanning/policies" \
       #       --publish-token "${TOKEN}"
+
+      - name: Show workspace files (debug)
+        run: |
+          sudo apt-get install -y tree 2>/dev/null || true
+          echo "=== Workspace ==="
+          tree "${GITHUB_WORKSPACE}" || find "${GITHUB_WORKSPACE}" -not -path '*/.git/*'
+          echo "=== nctl config/temp dirs ==="
+          tree "${HOME}/.nirmata" 2>/dev/null || echo "(nctl dirs not yet created)"
+
       - name: Run nctl scan (PodSecurity)
         run: |
           set +e
@@ -243,3 +252,4 @@ jobs:
         run: |
           echo "::error::Helm policy scan failed: ${{ steps.parse.outputs.violations_count }} violation(s) found in ${CHART_PATH}. See job summary to fix violations or request policy exceptions."
           exit 1
+
