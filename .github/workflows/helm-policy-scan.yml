@@ -110,6 +110,9 @@ jobs:
           echo "=== nctl config/temp dirs ==="
           tree "${HOME}/.nirmata" 2>/dev/null || echo "(nctl dirs not yet created)"
 
+      - name: Clean nctl tmp dir
+        run: rm -rf "${HOME}/.nirmata/nctl/tmp"
+
       - name: Run nctl scan (PodSecurity)
         run: |
           set +e
