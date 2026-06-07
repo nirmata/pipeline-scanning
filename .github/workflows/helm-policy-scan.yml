@@ -182,7 +182,7 @@ jobs:
       - name: Write job summary
         if: always()
         run: |
-          GH_REPO="https://github.com/${{ github.repository }}"
+          WORKFLOW_URL="https://github.com/${{ github.repository }}/actions/workflows/install-remediator.yml"
 
           {
             echo "## Helm Policy Scan"
@@ -196,7 +196,12 @@ jobs:
             echo ""
           } >> "$GITHUB_STEP_SUMMARY"
 
-          REPO_URL="${GH_REPO}"
+          # Build the NCH findings URL for this repository (works for any repo name).
+          # For nirmata.io (cloud SaaS), the webclient is served from www.nirmata.io.
+          # A server-side redirect from nirmata.io/webclient/ → www.nirmata.io/webclient/
+          # drops the hash fragment, so we link directly to www.nirmata.io to avoid it.
+          # Enterprise installs use NIRMATA_URL as-is (no www. redirect).
+          REPO_URL="https://github.com/${{ github.repository }}"
           ENCODED_REPO=$(python3 -c "import urllib.parse; print(urllib.parse.quote('${REPO_URL}', safe=''))")
           if [[ "${NIRMATA_URL}" =~ ://nirmata\.io(/|$) ]]; then
             WEBCLIENT_BASE="https://www.nirmata.io"
@@ -204,14 +209,15 @@ jobs:
             WEBCLIENT_BASE="${NIRMATA_URL}"
           fi
           NCH_EXCEPTION_URL="${WEBCLIENT_BASE}/webclient/#policy-reports/repositories/${ENCODED_REPO}/findings"
+          NCH_LOGIN_URL="${NIRMATA_URL}/security/"
 
           if [[ "${{ steps.parse.outputs.violations_found }}" == "true" ]]; then
             {
               echo "### ❌ ${{ steps.parse.outputs.violations_count }} violation(s) detected"
               echo ""
-              echo "For each violation, click **🛠️ Fix** to open a one-click remediation workflow"
-              echo "(pre-targeted at that policy — just press **Run workflow**),"
-              echo "or click **📋 Exception** to file a policy exception in NCH."
+              echo "For each violation, choose an action:"
+              echo "- **🛠️ Fix a violation** — triggers the remediator agent to open a PR with an automated fix"
+              echo "- **📋 File an Exception** — opens the NCH findings page for this repository so developers can file policyexceptions for their violations"
               echo ""
               echo "| Violation | Policy | Rule | Severity | Actions |"
               echo "|---|---|---|---|---|"
@@ -225,9 +231,7 @@ jobs:
                 rule="$(echo "$rule" | xargs)"
                 sev="$(echo "$sev" | xargs)"
 
-                FIX_URL="${GH_REPO}/actions/workflows/fix-${pol}.yml"
-
-                echo "| \`${res}\` | \`${pol}\` | \`${rule}\` | ${sev} | [🛠️ Fix](${FIX_URL}) &nbsp;**OR**&nbsp; [📋 Exception](${NCH_EXCEPTION_URL}) |" \
+                echo "| \`${res}\` | \`${pol}\` | \`${rule}\` | ${sev} | [🛠️ Fix a violation](${WORKFLOW_URL}) &nbsp;**OR**&nbsp; [📋 File an Exception](${NCH_EXCEPTION_URL}) |" \
                   >> "$GITHUB_STEP_SUMMARY"
               done
 
@@ -236,9 +240,11 @@ jobs:
               echo "---"
               echo "### How to act on a violation"
               echo ""
-              echo "#### Option 1 — 🛠️ Fix (one-click remediation PR)"
-              echo "1. Click **🛠️ Fix** next to the violation"
-              echo "2. Click **Run workflow** — the remediator agent opens a PR with the fix automatically"
+              echo "#### Option 1 — 🛠️ Fix a violation (opens a PR)"
+              echo "1. Click **🛠️ Fix a violation** for any violation"
+              echo "2. Click **Run workflow** (top-right of the remediator page)"
+              echo "3. Check the box(es) for the policies you want to remediate"
+              echo "4. Click **Run workflow** — the agent creates a PR with the fix"
               echo ""
               echo "#### Option 2 — 📋 File an Exception (via NCH)"
               echo "1. Click **📋 File an Exception** — you will land directly on the findings page for this repository"
