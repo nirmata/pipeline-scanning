@@ -1,0 +1,11 @@
+name: Fix require-requests-limits
+
+on:
+  workflow_dispatch:
+
+jobs:
+  fix:
+    uses: nirmata/pipeline-scanning/.github/workflows/install-remediator.yml@helm-app
+    with:
+      require_requests_limits: true
+    secrets: inherit

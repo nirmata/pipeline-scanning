@@ -1,0 +1,11 @@
+name: Fix disallow-capabilities-strict
+
+on:
+  workflow_dispatch:
+
+jobs:
+  fix:
+    uses: nirmata/pipeline-scanning/.github/workflows/install-remediator.yml@helm-app
+    with:
+      disallow_capabilities_strict: true
+    secrets: inherit
