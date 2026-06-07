@@ -126,7 +126,7 @@ jobs:
             --policies="pipeline-scanning/policies/resource-limits" \
             --url "${{ vars.NIRMATA_URL }}" \
             --token "${{ secrets.NIRMATA_TEAM_TOKEN }}" \
-            --publish | tee /tmp/scan-output.txt
+            --publish 2>&1 | tee /tmp/scan-output.txt
           if grep -qE "[1-9][0-9]* policy violation" /tmp/scan-output.txt; then
             echo "::error::Policy violations detected. See scan output above."
             exit 1
