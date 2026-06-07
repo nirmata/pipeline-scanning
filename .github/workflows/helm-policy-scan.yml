@@ -182,7 +182,7 @@ jobs:
       - name: Write job summary
         if: always()
         run: |
-          WORKFLOW_URL="https://github.com/${{ github.repository }}/actions/workflows/install-remediator.yml"
+          WORKFLOW_URL="https://github.com/${{ github.repository }}/actions/workflows/install-remediator.yml?ref=${{ github.ref_name }}"
 
           {
             echo "## Helm Policy Scan"
@@ -241,10 +241,17 @@ jobs:
               echo "### How to act on a violation"
               echo ""
               echo "#### Option 1 — 🛠️ Fix a violation (opens a PR)"
-              echo "1. Click **🛠️ Fix a violation** for any violation"
+              echo "1. Click **🛠️ Fix a violation** for the violation you want to fix"
               echo "2. Click **Run workflow** (top-right of the remediator page)"
-              echo "3. Check the box(es) for the policies you want to remediate"
+              echo "3. Select the matching **Policy group** from the dropdown"
               echo "4. Click **Run workflow** — the agent creates a PR with the fix"
+              echo ""
+              echo "| Policy group | Policies covered |"
+              echo "|---|---|"
+              echo "| **Seccomp violations** | \`restrict-seccomp-strict\` |"
+              echo "| **Resource limit violations** | \`require-requests-limits\` |"
+              echo "| **PSS Restricted violations** | \`disallow-capabilities-strict\`, \`disallow-privilege-escalation\`, \`require-run-as-non-root-user\`, \`require-run-as-nonroot\`, \`restrict-volume-types\` |"
+              echo "| **All violations** | All of the above |"
               echo ""
               echo "#### Option 2 — 📋 File an Exception (via NCH)"
               echo "1. Click **📋 File an Exception** — you will land directly on the findings page for this repository"
