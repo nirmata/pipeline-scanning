@@ -127,46 +127,68 @@ jobs:
             --url "${{ vars.NIRMATA_URL }}" \
             --token "${{ secrets.NIRMATA_TEAM_TOKEN }}" \
             --publish 2>&1 | tee /tmp/scan-output.txt
-          if grep -qE "[1-9][0-9]* policy violation" /tmp/scan-output.txt; then
-            echo "::error::Policy violations detected. See scan output above."
-            exit 1
-          fi
+          true  # violations are handled by the parse + fail steps below
 
       - name: Parse violations
         id: parse
-        if: always() && hashFiles('report.json') != ''
+        if: always()
         run: |
           set -euo pipefail
 
-          jq -r '
-            .policies // [] |
-            map(. as $pol |
-              (.namespaceScopedResources // []) |
-              map(.resources // [] | .[]) | flatten |
-              map(. as $res |
-                (.rules // []) |
-                map(select(.Status == "fail")) |
-                map({
-                  resource: $res.name,
-                  policy:   $pol.name,
-                  rule:     .Name,
-                  severity: .Severity,
-                  message:  .Message
-                })
-              ) | flatten
-            ) | flatten | .[]
-          ' report.json > violations.json
+          # Strip ANSI escape codes so text matching works reliably
+          sed 's/\x1b\[[0-9;]*[a-zA-Z]//g' /tmp/scan-output.txt > /tmp/scan-clean.txt 2>/dev/null || true
 
-          COUNT=0
-          if [[ -s violations.json ]]; then
-            COUNT=$(jq -s 'length' violations.json)
-          fi
-          echo "violations_count=${COUNT}" >> "$GITHUB_OUTPUT"
-          if [[ "${COUNT}" -gt 0 ]]; then
-            echo "violations_found=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "violations_found=false" >> "$GITHUB_OUTPUT"
-          fi
+          python3 - << 'PYEOF'
+import re, json, os, sys
+
+try:
+    with open('/tmp/scan-clean.txt') as f:
+        content = f.read()
+except FileNotFoundError:
+    content = ''
+
+# Extract resource name from "➜ helmchart: X resource: Y:" line
+resource = 'unknown'
+m = re.search(r'resource:\s+(\S+?):', content)
+if m:
+    resource = m.group(1)
+
+# Severity lookup by policy name (Kyverno community policies)
+SEVERITY = {
+    'require-requests-limits':        'high',
+    'disallow-capabilities-strict':   'medium',
+    'disallow-privilege-escalation':  'medium',
+    'require-run-as-non-root-user':   'medium',
+    'require-run-as-nonroot':         'medium',
+    'restrict-seccomp-strict':        'medium',
+    'restrict-volume-types':          'medium',
+}
+
+violations = []
+for line in content.splitlines():
+    if '| fail' not in line:
+        continue
+    parts = [p.strip() for p in line.split('|') if p.strip()]
+    if not parts or '/' not in parts[0]:
+        continue
+    policy_rule = parts[0]
+    slash = policy_rule.index('/')
+    policy = policy_rule[:slash].strip()
+    rule   = policy_rule[slash+1:].strip()
+    severity = SEVERITY.get(policy, 'medium')
+    violations.append({'resource': resource, 'policy': policy, 'rule': rule, 'severity': severity})
+
+with open('violations.json', 'w') as f:
+    for v in violations:
+        f.write(json.dumps(v) + '\n')
+
+count = len(violations)
+with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
+    f.write(f'violations_count={count}\n')
+    f.write(f'violations_found={"true" if count > 0 else "false"}\n')
+
+print(f'Parsed {count} violation(s)')
+PYEOF
 
       - name: Write job summary
         if: always()
