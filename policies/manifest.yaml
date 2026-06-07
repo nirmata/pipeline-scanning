@@ -1,28 +1,49 @@
 policies:
-  - name: seccomp-policy
-    displayName: "Seccomp violations"
-    path: policies/seccomp
+  - name: restrict-seccomp-strict
+    displayName: "restrict-seccomp-strict"
+    path: policies/seccomp/restrict-seccomp-strict.yaml
     ref: kyverno-policies
     resourceName: nginx-seccomp-fix
     branchPrefix: remediation-seccomp-
 
-  - name: resource-limits-policy
-    displayName: "Resource limit violations"
-    path: policies/resource-limits
+  - name: require-requests-limits
+    displayName: "require-requests-limits"
+    path: policies/resource-limits/require_pod_requests_limits.yaml
     ref: kyverno-policies
     resourceName: nginx-resource-limits-fix
     branchPrefix: remediation-resource-limits-
 
-  - name: baseline-policy
-    displayName: "PSS Baseline violations"
-    path: policies/baseline
+  - name: disallow-capabilities-strict
+    displayName: "disallow-capabilities-strict"
+    path: policies/restricted/disallow-capabilities-strict.yaml
     ref: kyverno-policies
-    resourceName: nginx-baseline-fix
-    branchPrefix: remediation-baseline-
+    resourceName: nginx-restricted-fix
+    branchPrefix: remediation-restricted-
 
-  - name: restricted-policy
-    displayName: "PSS Restricted violations"
-    path: policies/restricted
+  - name: disallow-privilege-escalation
+    displayName: "disallow-privilege-escalation"
+    path: policies/restricted/disallow-privilege-escalation.yaml
+    ref: kyverno-policies
+    resourceName: nginx-restricted-fix
+    branchPrefix: remediation-restricted-
+
+  - name: require-run-as-non-root-user
+    displayName: "require-run-as-non-root-user"
+    path: policies/restricted/require-run-as-non-root-user.yaml
+    ref: kyverno-policies
+    resourceName: nginx-restricted-fix
+    branchPrefix: remediation-restricted-
+
+  - name: require-run-as-nonroot
+    displayName: "require-run-as-nonroot"
+    path: policies/restricted/require-run-as-nonroot.yaml
+    ref: kyverno-policies
+    resourceName: nginx-restricted-fix
+    branchPrefix: remediation-restricted-
+
+  - name: restrict-volume-types
+    displayName: "restrict-volume-types"
+    path: policies/restricted/restrict-volume-types.yaml
     ref: kyverno-policies
     resourceName: nginx-restricted-fix
     branchPrefix: remediation-restricted-
