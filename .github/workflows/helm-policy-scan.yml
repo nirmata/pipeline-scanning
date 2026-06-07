@@ -182,7 +182,7 @@ jobs:
       - name: Write job summary
         if: always()
         run: |
-          WORKFLOW_URL="https://github.com/${{ github.repository }}/actions/workflows/install-remediator.yml?ref=${{ github.ref_name }}"
+          WORKFLOW_URL="https://github.com/${{ github.repository }}/actions/workflows/install-remediator.yml"
 
           {
             echo "## Helm Policy Scan"
