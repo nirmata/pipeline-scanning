@@ -16,7 +16,6 @@
 name: Install Remediator Agent
 
 on:
-  # Manually trigger with any combination of policies checked
   workflow_dispatch:
     inputs:
       restrict_seccomp_strict:
@@ -47,37 +46,6 @@ on:
         description: "restrict-volume-types"
         type: boolean
         default: false
-  # Called by per-policy fix-<policy>.yml trigger workflows
-  workflow_call:
-    inputs:
-      restrict_seccomp_strict:
-        type: boolean
-        default: false
-      require_requests_limits:
-        type: boolean
-        default: false
-      disallow_capabilities_strict:
-        type: boolean
-        default: false
-      disallow_privilege_escalation:
-        type: boolean
-        default: false
-      require_run_as_non_root_user:
-        type: boolean
-        default: false
-      require_run_as_nonroot:
-        type: boolean
-        default: false
-      restrict_volume_types:
-        type: boolean
-        default: false
-    secrets:
-      NIRMATA_SERVICE_ACCOUNT_TOKEN:
-        required: true
-      PAT:
-        required: true
-      GHCR_TOKEN:
-        required: true
 
 permissions:
   contents: read
