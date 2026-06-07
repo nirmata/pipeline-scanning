@@ -105,22 +105,28 @@ jobs:
       #       --publish-token "${TOKEN}"
 
 
-      - name: Run nctl scan (PodSecurity)
+      - name: Checkout kyverno policies
         run: |
-          set +e
-          echo "=== Starting nctl scan ==="
-          nctl scan repository --policy-sets pss-baseline,pss-restricted --url ${{ vars.NIRMATA_URL }} --token ${{ secrets.NIRMATA_TEAM_TOKEN }} --publish
-          status=$?
-          set -e
+          set -euo pipefail
+          git clone --no-checkout --depth=1 --filter=blob:none \
+            --branch kyverno-policies \
+            https://github.com/nirmata/pipeline-scanning.git pipeline-scanning
+          cd pipeline-scanning
+          git sparse-checkout init --cone
+          git sparse-checkout set policies
+          git checkout HEAD
 
-          echo "=== nctl scan completed with status: $status ==="
-
-          if [ $status -ne 0 ] && [ $status -ne 1 ]; then
-            echo "nctl scan failed with (status $status)"
-            exit $status
-          fi
-
-          echo "nctl completed (status $status). Violations may exist but workflow continues."      
+      - name: Scan repository against kyverno policies
+        run: |
+          set -euo pipefail
+          nctl scan repository \
+            --policies="pipeline-scanning/policies/baseline" \
+            --policies="pipeline-scanning/policies/restricted" \
+            --policies="pipeline-scanning/policies/seccomp" \
+            --policies="pipeline-scanning/policies/resource-limits" \
+            --url "${{ vars.NIRMATA_URL }}" \
+            --token "${{ secrets.NIRMATA_TEAM_TOKEN }}" \
+            --publish
 
       - name: Parse violations
         id: parse
