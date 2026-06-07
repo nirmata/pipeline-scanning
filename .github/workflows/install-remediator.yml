@@ -8,25 +8,44 @@
 #   PAT                           — GitHub Personal Access Token (for CreatePR action)
 #   GHCR_TOKEN                    — GitHub PAT with read:packages scope (to pull the agent image)
 #
-# Policy groups are defined in policies/manifest.yaml on the kyverno-policies branch.
-# To add a new policy: add the policy file, update manifest.yaml, add an option to the
-# policy_group dropdown below — no values files to create or maintain.
+# Individual policies are checkboxes — check one or more to remediate only those violations.
+# Leave all unchecked to remediate all violations at once.
+# To add a new policy: add the policy file to the kyverno-policies branch and add a boolean
+# input below — no values files to create or maintain.
 
 name: Install Remediator Agent
 
 on:
   workflow_dispatch:
     inputs:
-      policy_group:
-        description: "Policy group to remediate"
-        required: true
-        default: "All violations"
-        type: choice
-        options:
-          - All violations
-          - Seccomp violations
-          - Resource limit violations
-          - PSS Restricted violations
+      restrict_seccomp_strict:
+        description: "restrict-seccomp-strict"
+        type: boolean
+        default: false
+      require_requests_limits:
+        description: "require-requests-limits"
+        type: boolean
+        default: false
+      disallow_capabilities_strict:
+        description: "disallow-capabilities-strict"
+        type: boolean
+        default: false
+      disallow_privilege_escalation:
+        description: "disallow-privilege-escalation"
+        type: boolean
+        default: false
+      require_run_as_non_root_user:
+        description: "require-run-as-non-root-user"
+        type: boolean
+        default: false
+      require_run_as_nonroot:
+        description: "require-run-as-nonroot"
+        type: boolean
+        default: false
+      restrict_volume_types:
+        description: "restrict-volume-types"
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -38,7 +57,7 @@ env:
 
 jobs:
   install-remediator:
-    name: Deploy remediator — ${{ inputs.policy_group }}
+    name: Deploy remediator
     runs-on: ubuntu-latest
     timeout-minutes: 60
 
@@ -48,74 +67,96 @@ jobs:
         with:
           ref: helm-app
 
-      - name: Install yq
-        run: |
-          sudo curl -fsSL https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64 \
-            -o /usr/local/bin/yq
-          sudo chmod +x /usr/local/bin/yq
-          yq --version
-
-      - name: Fetch policy manifest from kyverno-policies
-        run: |
-          git fetch origin kyverno-policies
-          git show origin/kyverno-policies:policies/manifest.yaml > /tmp/manifest.yaml
-          echo "Loaded manifest:"
-          cat /tmp/manifest.yaml
-
-      - name: Generate VCS values patch from manifest
+      - name: Generate VCS values patch from selected policies
         id: patch
         run: |
-          SELECTION="${{ inputs.policy_group }}"
+          set -euo pipefail
           REPO="${NGINX_REPO}"
-          CHART_REF="${CHART_REF}"
 
-          if [[ "${SELECTION}" == "All violations" ]]; then
-            echo "patch_file=" >> "$GITHUB_OUTPUT"
-            echo "Using base values file as-is (all policy groups)."
-          else
-            # Look up the matching policy entry in the manifest
-            IDX=$(yq e ".policies | to_entries | .[] | select(.value.displayName == \"${SELECTION}\") | .key" /tmp/manifest.yaml)
+          # --- collect checked policies ---
+          SELECTED=()
+          [[ "${{ inputs.restrict_seccomp_strict }}"       == "true" ]] && SELECTED+=("restrict-seccomp-strict")      || true
+          [[ "${{ inputs.require_requests_limits }}"       == "true" ]] && SELECTED+=("require-requests-limits")      || true
+          [[ "${{ inputs.disallow_capabilities_strict }}"  == "true" ]] && SELECTED+=("disallow-capabilities-strict") || true
+          [[ "${{ inputs.disallow_privilege_escalation }}" == "true" ]] && SELECTED+=("disallow-privilege-escalation")|| true
+          [[ "${{ inputs.require_run_as_non_root_user }}"  == "true" ]] && SELECTED+=("require-run-as-non-root-user") || true
+          [[ "${{ inputs.require_run_as_nonroot }}"        == "true" ]] && SELECTED+=("require-run-as-nonroot")       || true
+          [[ "${{ inputs.restrict_volume_types }}"         == "true" ]] && SELECTED+=("restrict-volume-types")        || true
 
-            if [[ -z "${IDX}" ]]; then
-              echo "::error::No manifest entry found for '${SELECTION}'"
-              exit 1
-            fi
-
-            NAME=$(yq e ".policies[${IDX}].name"           /tmp/manifest.yaml)
-            POLICY_PATH=$(yq e ".policies[${IDX}].path"  /tmp/manifest.yaml)
-            REF=$(yq e ".policies[${IDX}].ref"           /tmp/manifest.yaml)
-            RES=$(yq e ".policies[${IDX}].resourceName"  /tmp/manifest.yaml)
-            PREFIX=$(yq e ".policies[${IDX}].branchPrefix" /tmp/manifest.yaml)
-
-            echo "Generating VCS patch for: ${NAME} (${POLICY_PATH})"
-
-            cat > /tmp/vcs-patch.yaml << EOF
-          remediator:
-            target:
-              vcs:
-                policies:
-                  - name: ${NAME}
-                    repo: ${REPO}
-                    path: ${POLICY_PATH}
-                    ref: ${REF}
-                resources:
-                  - name: ${RES}
-                    repo: ${REPO}
-                    path: ./
-                    ref: ${CHART_REF}
-                    policyRefs:
-                      - ${NAME}
-          tool:
-            defaults:
-              git:
-                pullRequests:
-                  branchPrefix: ${PREFIX}
-          EOF
-
-            echo "Generated patch:"
-            cat /tmp/vcs-patch.yaml
-            echo "patch_file=/tmp/vcs-patch.yaml" >> "$GITHUB_OUTPUT"
+          if [[ ${#SELECTED[@]} -eq 0 ]]; then
+            echo "No policies selected — remediating all violations (using base values)."
+            echo "patch_file="         >> "$GITHUB_OUTPUT"
+            echo "selected_label=all violations" >> "$GITHUB_OUTPUT"
+            echo "expected_prs=1"      >> "$GITHUB_OUTPUT"
+            exit 0
           fi
+
+          echo "Selected policies: ${SELECTED[*]}"
+          echo "selected_label=${SELECTED[*]}" >> "$GITHUB_OUTPUT"
+
+          # --- per-policy metadata (path and resource name) ---
+          get_path() {
+            case "$1" in
+              restrict-seccomp-strict)       echo "policies/seccomp/restrict-seccomp-strict.yaml" ;;
+              require-requests-limits)       echo "policies/resource-limits/require_pod_requests_limits.yaml" ;;
+              disallow-capabilities-strict)  echo "policies/restricted/disallow-capabilities-strict.yaml" ;;
+              disallow-privilege-escalation) echo "policies/restricted/disallow-privilege-escalation.yaml" ;;
+              require-run-as-non-root-user)  echo "policies/restricted/require-run-as-non-root-user.yaml" ;;
+              require-run-as-nonroot)        echo "policies/restricted/require-run-as-nonroot.yaml" ;;
+              restrict-volume-types)         echo "policies/restricted/restrict-volume-types.yaml" ;;
+            esac
+          }
+
+          get_resource() {
+            case "$1" in
+              restrict-seccomp-strict)  echo "nginx-seccomp-fix" ;;
+              require-requests-limits)  echo "nginx-resource-limits-fix" ;;
+              *)                        echo "nginx-restricted-fix" ;;
+            esac
+          }
+
+          # --- group selected policies by resource ---
+          declare -A res_policies
+          for name in "${SELECTED[@]}"; do
+            res=$(get_resource "$name")
+            res_policies[$res]+="${name} "
+          done
+
+          # --- build patch YAML line by line (no heredoc) ---
+          {
+            echo "remediator:"
+            echo "  target:"
+            echo "    vcs:"
+            echo "      policies:"
+            for name in "${SELECTED[@]}"; do
+              path=$(get_path "$name")
+              echo "        - name: ${name}"
+              echo "          repo: ${REPO}"
+              echo "          path: ${path}"
+              echo "          ref: kyverno-policies"
+            done
+            echo "      resources:"
+            for res in "${!res_policies[@]}"; do
+              echo "        - name: ${res}"
+              echo "          repo: ${REPO}"
+              echo "          path: ./"
+              echo "          ref: ${CHART_REF}"
+              echo "          policyRefs:"
+              for pol in ${res_policies[$res]}; do
+                echo "            - ${pol}"
+              done
+            done
+            echo "tool:"
+            echo "  defaults:"
+            echo "    git:"
+            echo "      pullRequests:"
+            echo "        branchPrefix: remediation-"
+          } > /tmp/vcs-patch.yaml
+
+          echo "Generated patch:"
+          cat /tmp/vcs-patch.yaml
+          echo "patch_file=/tmp/vcs-patch.yaml"           >> "$GITHUB_OUTPUT"
+          echo "expected_prs=${#res_policies[@]}"         >> "$GITHUB_OUTPUT"
 
       - name: Install kind
         run: |
@@ -231,7 +272,7 @@ jobs:
 
       - name: Tail agent logs — wait for PR then open nirmatabot window
         run: |
-          EXPECTED_PRS=1
+          EXPECTED_PRS=${{ steps.patch.outputs.expected_prs || 1 }}
           echo "Phase 1: waiting for ${EXPECTED_PRS} PR(s) to be created (max 8 min)..."
 
           POD=$(kubectl get pod -n nirmata -l app.kubernetes.io/instance=nirmata-agent \
@@ -310,7 +351,7 @@ jobs:
             echo "|---|---|"
             echo "| Cluster      | \`remediator-demo\` (kind) |"
             echo "| Namespace    | \`nirmata\` |"
-            echo "| Policy group | \`${{ inputs.policy_group }}\` |"
+            echo "| Policies | \`${{ steps.patch.outputs.selected_label }}\` |"
             echo "| Chart        | \`nirmata/nirmata-agent\` (--devel) |"
             echo ""
           } >> "$GITHUB_STEP_SUMMARY"
