@@ -1,0 +1,14 @@
+name: Fix restrict-seccomp-strict
+
+on:
+  workflow_dispatch:
+
+jobs:
+  fix:
+    uses: ./.github/workflows/install-remediator.yml
+    with:
+      restrict_seccomp_strict: true
+    secrets:
+      NIRMATA_SERVICE_ACCOUNT_TOKEN: ${{ secrets.NIRMATA_SERVICE_ACCOUNT_TOKEN }}
+      PAT: ${{ secrets.PAT }}
+      GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}
