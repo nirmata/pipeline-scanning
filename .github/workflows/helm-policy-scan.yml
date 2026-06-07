@@ -136,59 +136,48 @@ jobs:
           set -euo pipefail
 
           # Strip ANSI escape codes so text matching works reliably
-          sed 's/\x1b\[[0-9;]*[a-zA-Z]//g' /tmp/scan-output.txt > /tmp/scan-clean.txt 2>/dev/null || true
+          sed 's/\x1b\[[0-9;]*[a-zA-Z]//g' /tmp/scan-output.txt \
+            > /tmp/scan-clean.txt 2>/dev/null || true
 
-          python3 - << 'PYEOF'
-import re, json, os, sys
+          # Extract resource name from "resource: <name>:" line
+          RESOURCE=$(sed -n 's/.*resource: \([^: ]*\).*/\1/p' /tmp/scan-clean.txt \
+            | head -1 || true)
+          RESOURCE="${RESOURCE:-unknown}"
 
-try:
-    with open('/tmp/scan-clean.txt') as f:
-        content = f.read()
-except FileNotFoundError:
-    content = ''
+          rm -f violations.json
 
-# Extract resource name from "➜ helmchart: X resource: Y:" line
-resource = 'unknown'
-m = re.search(r'resource:\s+(\S+?):', content)
-if m:
-    resource = m.group(1)
+          # Parse each "| policy/rule | fail | ... |" row
+          while IFS='|' read -r _ policy_rule result _rest; do
+            policy_rule=$(echo "$policy_rule" | xargs 2>/dev/null || true)
+            result=$(echo "$result" | xargs 2>/dev/null || true)
+            if [[ "$result" == "fail" && "$policy_rule" == */* ]]; then
+              policy="${policy_rule%%/*}"
+              rule="${policy_rule#*/}"
+              case "$policy" in
+                require-requests-limits) sev="high" ;;
+                *) sev="medium" ;;
+              esac
+              jq -n \
+                --arg resource "$RESOURCE" \
+                --arg policy   "$policy" \
+                --arg rule     "$rule" \
+                --arg severity "$sev" \
+                '{resource:$resource,policy:$policy,rule:$rule,severity:$severity}' \
+                >> violations.json
+            fi
+          done < /tmp/scan-clean.txt
 
-# Severity lookup by policy name (Kyverno community policies)
-SEVERITY = {
-    'require-requests-limits':        'high',
-    'disallow-capabilities-strict':   'medium',
-    'disallow-privilege-escalation':  'medium',
-    'require-run-as-non-root-user':   'medium',
-    'require-run-as-nonroot':         'medium',
-    'restrict-seccomp-strict':        'medium',
-    'restrict-volume-types':          'medium',
-}
-
-violations = []
-for line in content.splitlines():
-    if '| fail' not in line:
-        continue
-    parts = [p.strip() for p in line.split('|') if p.strip()]
-    if not parts or '/' not in parts[0]:
-        continue
-    policy_rule = parts[0]
-    slash = policy_rule.index('/')
-    policy = policy_rule[:slash].strip()
-    rule   = policy_rule[slash+1:].strip()
-    severity = SEVERITY.get(policy, 'medium')
-    violations.append({'resource': resource, 'policy': policy, 'rule': rule, 'severity': severity})
-
-with open('violations.json', 'w') as f:
-    for v in violations:
-        f.write(json.dumps(v) + '\n')
-
-count = len(violations)
-with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
-    f.write(f'violations_count={count}\n')
-    f.write(f'violations_found={"true" if count > 0 else "false"}\n')
-
-print(f'Parsed {count} violation(s)')
-PYEOF
+          COUNT=0
+          if [[ -f violations.json && -s violations.json ]]; then
+            COUNT=$(grep -c '^{' violations.json || true)
+          fi
+          echo "violations_count=${COUNT}" >> "$GITHUB_OUTPUT"
+          if [[ "${COUNT}" -gt 0 ]]; then
+            echo "violations_found=true"  >> "$GITHUB_OUTPUT"
+          else
+            echo "violations_found=false" >> "$GITHUB_OUTPUT"
+          fi
+          echo "Parsed ${COUNT} violation(s)"
 
       - name: Write job summary
         if: always()
