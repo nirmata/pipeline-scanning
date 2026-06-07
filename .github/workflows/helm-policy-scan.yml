@@ -104,16 +104,6 @@ jobs:
       #       --policies="pipeline-scanning/policies" \
       #       --publish-token "${TOKEN}"
 
-      - name: Show workspace files (debug)
-        run: |
-          sudo apt-get install -y tree 2>/dev/null || true
-          echo "=== Workspace ==="
-          tree "${GITHUB_WORKSPACE}" || find "${GITHUB_WORKSPACE}" -not -path '*/.git/*'
-          echo "=== nctl config/temp dirs ==="
-          tree "${HOME}/.nirmata" 2>/dev/null || echo "(nctl dirs not yet created)"
-
-      - name: Clean nctl tmp dir
-        run: rm -rf "${HOME}/.nirmata/nctl/tmp"
 
       - name: Run nctl scan (PodSecurity)
         run: |
