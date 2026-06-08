@@ -1,0 +1,99 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 940" font-family="Segoe UI, system-ui, sans-serif" font-size="13">
+  <rect width="800" height="940" fill="#ffffff"/>
+
+  <!-- Arrow markers -->
+  <defs>
+    <marker id="arrowB" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+      <path d="M0,0 L0,6 L8,3 z" fill="#1e1e1e"/>
+    </marker>
+    <marker id="arrowG" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+      <path d="M0,0 L0,6 L8,3 z" fill="#2f9e44"/>
+    </marker>
+    <marker id="arrowR" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+      <path d="M0,0 L0,6 L8,3 z" fill="#e03131"/>
+    </marker>
+    <marker id="arrowBl" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+      <path d="M0,0 L0,6 L8,3 z" fill="#1971c2"/>
+    </marker>
+  </defs>
+
+  <!-- Scan Results -->
+  <rect x="230" y="20" width="340" height="52" rx="8" fill="#fff9db" stroke="#1e1e1e" stroke-width="2"/>
+  <text x="400" y="42" text-anchor="middle" font-weight="600">Scan Results</text>
+  <text x="400" y="60" text-anchor="middle" font-size="11" fill="#555">(CI Job Summary / NCH UI)</text>
+
+  <line x1="400" y1="72" x2="400" y2="108" stroke="#1e1e1e" stroke-width="2" marker-end="url(#arrowB)"/>
+  <text x="430" y="95" font-size="10" fill="#555">click "File an Exception"</text>
+
+  <!-- Exception Request Form -->
+  <rect x="160" y="110" width="480" height="90" rx="8" fill="#f8f9fa" stroke="#1e1e1e" stroke-width="2"/>
+  <text x="400" y="132" text-anchor="middle" font-weight="600">Exception Request Form</text>
+  <text x="400" y="152" text-anchor="middle" font-size="12" fill="#555">Policy name · Resource name · Branch</text>
+  <text x="400" y="168" text-anchor="middle" font-size="11" fill="#888">(pre-filled from scan finding)</text>
+  <text x="400" y="188" text-anchor="middle" font-size="12" fill="#555">Duration · Justification  (user input)</text>
+
+  <line x1="400" y1="202" x2="400" y2="240" stroke="#1e1e1e" stroke-width="2" marker-end="url(#arrowB)"/>
+
+  <!-- Ticketing System group -->
+  <rect x="100" y="242" width="600" height="120" rx="8" fill="#f8f9fa" stroke="#1e1e1e" stroke-width="2"/>
+  <text x="400" y="264" text-anchor="middle" font-weight="600" font-style="italic">Ticketing System (configurable)</text>
+
+  <rect x="120" y="278" width="140" height="40" rx="6" fill="#deebff" stroke="#0052cc" stroke-width="1.5"/>
+  <text x="190" y="303" text-anchor="middle" fill="#0052cc" font-weight="600">Jira</text>
+
+  <rect x="330" y="278" width="140" height="40" rx="6" fill="#f6f8fa" stroke="#1e1e1e" stroke-width="1.5"/>
+  <text x="400" y="303" text-anchor="middle" font-weight="600">GitHub Issues</text>
+
+  <rect x="540" y="278" width="140" height="40" rx="6" fill="#ebfbee" stroke="#009900" stroke-width="1.5"/>
+  <text x="610" y="303" text-anchor="middle" fill="#009900" font-weight="600">ServiceNow</text>
+
+  <line x1="400" y1="364" x2="400" y2="402" stroke="#1e1e1e" stroke-width="2" marker-end="url(#arrowB)"/>
+  <text x="435" y="389" font-size="10" fill="#555">ticket created</text>
+
+  <!-- Decision diamond -->
+  <polygon points="400,404 520,464 400,524 280,464" fill="#f8f9fa" stroke="#1e1e1e" stroke-width="2"/>
+  <text x="400" y="458" text-anchor="middle" font-weight="600">Admin / Security</text>
+  <text x="400" y="476" text-anchor="middle" font-weight="600">team reviews</text>
+
+  <!-- Approve arrow (left) -->
+  <line x1="280" y1="464" x2="190" y2="530" stroke="#2f9e44" stroke-width="2" marker-end="url(#arrowG)"/>
+  <text x="204" y="497" text-anchor="middle" font-size="11" fill="#2f9e44">approve</text>
+
+  <!-- Reject arrow (right) -->
+  <line x1="520" y1="464" x2="610" y2="530" stroke="#e03131" stroke-width="2" marker-end="url(#arrowR)"/>
+  <text x="596" y="497" text-anchor="middle" font-size="11" fill="#e03131">reject</text>
+
+  <!-- Webhook box (left / approve) -->
+  <rect x="80" y="532" width="220" height="56" rx="8" fill="#d3f9d8" stroke="#2f9e44" stroke-width="2"/>
+  <text x="190" y="554" text-anchor="middle" font-weight="600" fill="#2f9e44">Webhook → NCH API</text>
+  <text x="190" y="572" text-anchor="middle" font-size="11" fill="#555">PER created + approved</text>
+
+  <!-- Reject box (right) -->
+  <rect x="500" y="532" width="220" height="56" rx="8" fill="#fff5f5" stroke="#e03131" stroke-width="2"/>
+  <text x="610" y="554" text-anchor="middle" font-weight="600" fill="#e03131">Ticket closed</text>
+  <text x="610" y="572" text-anchor="middle" font-size="11" fill="#555">no exception created</text>
+
+  <!-- Webhook → YAML PR -->
+  <line x1="190" y1="590" x2="190" y2="634" stroke="#2f9e44" stroke-width="2" marker-end="url(#arrowG)"/>
+
+  <!-- YAML PR box -->
+  <rect x="80" y="636" width="220" height="56" rx="8" fill="#e7f5ff" stroke="#1971c2" stroke-width="2"/>
+  <text x="190" y="658" text-anchor="middle" font-weight="600" fill="#1971c2">PolicyException YAML PR</text>
+  <text x="190" y="676" text-anchor="middle" font-size="11" fill="#555">kyverno-exceptions/&lt;name&gt;.yaml</text>
+
+  <!-- YAML PR → merge -->
+  <line x1="190" y1="694" x2="190" y2="738" stroke="#2f9e44" stroke-width="2" marker-end="url(#arrowG)"/>
+  <text x="212" y="722" font-size="10" fill="#2f9e44">merge</text>
+
+  <!-- Exception active -->
+  <rect x="80" y="740" width="220" height="52" rx="8" fill="#d3f9d8" stroke="#2f9e44" stroke-width="2"/>
+  <text x="190" y="762" text-anchor="middle" font-weight="600" fill="#2f9e44">Exception active</text>
+  <text x="190" y="780" text-anchor="middle" font-size="11" fill="#555">ticket auto-closed with PR link</text>
+
+  <!-- Note about configurable -->
+  <rect x="450" y="640" width="310" height="80" rx="6" fill="#f8f9fa" stroke="#adb5bd" stroke-width="1.5" stroke-dasharray="4,3"/>
+  <text x="605" y="660" text-anchor="middle" font-weight="600" font-size="12" fill="#555">Configurable per cluster:</text>
+  <text x="605" y="678" text-anchor="middle" font-size="11" fill="#777">• Ticketing system type</text>
+  <text x="605" y="694" text-anchor="middle" font-size="11" fill="#777">• Project / board / repo</text>
+  <text x="605" y="710" text-anchor="middle" font-size="11" fill="#777">• Approval action (transition / label)</text>
+</svg>
