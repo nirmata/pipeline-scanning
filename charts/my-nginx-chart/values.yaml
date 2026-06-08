@@ -39,10 +39,10 @@ podAnnotations: {}
 podLabels: {}
 
 podSecurityContext:
-  runAsNonRoot: true
+  runAsNonRoot: false
+  # fsGroup: 2000
   seccompProfile:
     type: RuntimeDefault
-  # fsGroup: 2000
 
 securityContext:
   allowPrivilegeEscalation: false
@@ -51,9 +51,6 @@ securityContext:
     - ALL
   seccompProfile:
     type: RuntimeDefault
-  # capabilities:
-  #   drop:
-  #   - ALL
   # readOnlyRootFilesystem: true
   # runAsUser: 1000
 
@@ -81,9 +78,9 @@ ingress:
   #    hosts:
   #      - chart-example.local
 
+resources: {}
 resources:
   limits:
-    cpu: 100m
     memory: 128Mi
   requests:
     cpu: 100m
