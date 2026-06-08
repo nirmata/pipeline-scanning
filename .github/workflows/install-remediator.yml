@@ -18,15 +18,19 @@ on:
   workflow_dispatch:
     inputs:
       policy_group:
-        description: "Policy group to remediate"
+        description: "Policy to remediate"
         required: true
         default: "All violations"
         type: choice
         options:
           - All violations
-          - Seccomp violations
-          - Resource limit violations
-          - PSS Restricted violations
+          - restrict-seccomp-strict
+          - require-requests-limits
+          - disallow-capabilities-strict
+          - disallow-privilege-escalation
+          - require-run-as-non-root-user
+          - require-run-as-nonroot
+          - restrict-volume-types
 
 permissions:
   contents: read
@@ -74,7 +78,7 @@ jobs:
             echo "Using base values file as-is (all policy groups)."
           else
             # Look up the matching policy entry in the manifest
-            IDX=$(yq e ".policies | to_entries | .[] | select(.value.displayName == \"${SELECTION}\") | .key" /tmp/manifest.yaml)
+            IDX=$(yq e ".policies | to_entries | .[] | select(.value.name == \"${SELECTION}\") | .key" /tmp/manifest.yaml)
 
             if [[ -z "${IDX}" ]]; then
               echo "::error::No manifest entry found for '${SELECTION}'"
