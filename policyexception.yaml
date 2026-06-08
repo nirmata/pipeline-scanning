@@ -1,0 +1,20 @@
+apiVersion: "kyverno.io/v2beta1"
+kind: "PolicyException"
+metadata:
+  labels:
+    cleanup.kyverno.io/ttl: "2026-06-11T133313Z"
+  name: "per-pipeline-scanning-pr29-g3i93gzc-0"
+  namespace: "kyverno"
+spec:
+  exceptions:
+    - policyName: "disallow-privilege-escalation"
+      ruleNames:
+        - "autogen-privilege-escalation"
+        - "autogen-autogen-privilege-escalation"
+  match:
+    any:
+      - resources:
+          kinds:
+            - "*"
+          names: []
+          namespaces: []
