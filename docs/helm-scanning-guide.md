@@ -104,10 +104,6 @@ Once triggered, the Remediator Agent runs the following steps:
    source repository. The PR description lists each violation addressed, the file patched, and the
    policy rule satisfied.
 
-> **Note:** LLM-generated fixes should be reviewed before merging. The agent operates on
-> best-effort — not all violations have deterministic fixes and some suggestions may require
-> manual adjustment, especially for complex Helm templates with conditionals or `range` blocks.
-
 ---
 
 ### 2c. @nirmatabot Commands on Fix PRs
@@ -148,15 +144,6 @@ A `PolicyExceptionRequest` (PER) is created in NCH and routed to an approver. Se
 
 **GitHub vs GitLab:** The same `@nirmatabot` command syntax works for both platforms. GitHub
 triggers via the PR comment webhook; GitLab uses the GitLab comment event webhook.
-
-**Limitations:**
-
-| Limitation | Detail |
-|---|---|
-| 20-minute window | `@nirmatabot` commands are only accepted for 20 minutes after the fix PR is created. After that, `split-pr` must be done manually and exceptions must be filed via the NCH UI. |
-| LLM fix quality | Patches are AI-generated. Complex Helm templates with conditionals, `range` blocks, or shared helper templates may need manual review before merging. |
-| Ephemeral cluster (GitHub Actions) | The `kind` cluster is destroyed when the workflow job completes. If reconciliation does not finish within the job timeout, the fix PR may be incomplete. |
-| Policy group scope | Only predefined policy groups are available in the trigger UI. Arbitrary per-resource or per-namespace targeting is not supported at trigger time. |
 
 ---
 
