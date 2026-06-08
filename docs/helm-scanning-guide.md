@@ -35,20 +35,139 @@ location in your chart rather than to any rendered output.
 
 ![Architecture diagram](diagrams/architecture.svg)
 
-> **Note (2a — NCH UI path):** Approved PERs suppress violations automatically on the next scan run — no YAML file is needed in the repository.
+> **Note (3a — NCH UI path):** Approved PERs suppress violations automatically on the next scan run — no YAML file is needed in the repository.
 >
-> **Note (2b — nirmatabot path):** A `PolicyException` YAML must be created and merged in the repository before violations are suppressed. Automatic creation of this YAML PR after PER approval is blocked by open issues [#417](https://github.com/nirmata/go-service-agent/issues/417) and [#418](https://github.com/nirmata/go-service-agent/issues/418).
+> **Note (3b — nirmatabot path):** A `PolicyException` YAML must be created and merged in the repository before violations are suppressed. Automatic creation of this YAML PR after PER approval is blocked by open issues [#417](https://github.com/nirmata/go-service-agent/issues/417) and [#418](https://github.com/nirmata/go-service-agent/issues/418).
 
 ---
 
-## 2. PolicyException Workflow
+## 2. Remediation
+
+The Remediator Agent automatically creates fix PRs for Kyverno policy violations found during a
+scan. Fixes are applied directly to the Helm chart source — templates and `values.yaml` — using
+**HelmMapper**, which traces each violation back to its chart source file rather than to any
+rendered manifest.
+
+---
+
+### 2a. Triggering a Fix
+
+Use this path when a scan finds violations and you want the agent to attempt an automated fix.
+
+**Steps:**
+
+1. In the CI job summary (GitHub Actions) or pipeline output (GitLab), locate the violations table
+2. Click **🛠️ Fix a violation** next to any violation row
+3. On GitHub Actions, the **Install Remediator** workflow dispatch page opens. Select a policy
+   group from the dropdown:
+   - `All violations` — remediates every policy violation found in the scan
+   - Individual policy names — remediates only violations from that policy
+4. Click **Run workflow** — the Remediator Agent is deployed and begins reconciling
+
+**Policy groups available:**
+
+| Group | Description |
+|---|---|
+| `All violations` | Remediates all policy violations found in the scan |
+| `restrict-seccomp-strict` | Adds or corrects seccomp profile annotations |
+| `require-requests-limits` | Sets CPU and memory requests/limits |
+| `disallow-capabilities-strict` | Removes or restricts Linux capabilities |
+| `disallow-privilege-escalation` | Sets `allowPrivilegeEscalation: false` |
+| `require-run-as-non-root-user` | Sets a non-zero `runAsUser` |
+| `require-run-as-nonroot` | Sets `runAsNonRoot: true` |
+| `restrict-volume-types` | Restricts volume types to the allowed set |
+
+**GitHub vs GitLab:**
+
+| | GitHub Actions | GitLab CI |
+|---|---|---|
+| Trigger | Workflow dispatch from job summary button | Pipeline trigger via GitLab API |
+| Agent cluster | Ephemeral `kind` cluster created inside the Actions runner | Long-lived cluster with `nirmata-agent` already running |
+| Policy group selection | Dropdown in the workflow dispatch UI | Variable passed to the triggered pipeline |
+
+---
+
+### 2b. What the Agent Does
+
+Once triggered, the Remediator Agent runs the following steps:
+
+1. **Cluster setup (GitHub Actions only):** A `kind` cluster is created inside the GitHub Actions
+   runner. The `nirmata-agent` Helm chart is installed into the cluster, pointing to NCH.
+2. **Scan results loaded:** The agent receives the scan findings from NCH — the same violations
+   published by the initial `nctl scan repository` run.
+3. **HelmMapper resolution:** For each violation, HelmMapper traces the affected resource back
+   to its Helm chart source file (template YAML or `values.yaml`) to identify exactly where the
+   patch must be applied.
+4. **LLM remediation plan:** The agent generates a remediation plan using an LLM. The plan
+   specifies the exact file, line, and change needed for each violation.
+5. **Fix PR created:** The agent commits the patches to a new branch and opens a fix PR in the
+   source repository. The PR description lists each violation addressed, the file patched, and the
+   policy rule satisfied.
+
+> **Note:** LLM-generated fixes should be reviewed before merging. The agent operates on
+> best-effort — not all violations have deterministic fixes and some suggestions may require
+> manual adjustment, especially for complex Helm templates with conditionals or `range` blocks.
+
+---
+
+### 2c. @nirmatabot Commands on Fix PRs
+
+After the fix PR is created, `@nirmatabot` is active for **20 minutes**. Post commands as PR
+comments within this window.
+
+**Splitting a multi-policy PR:**
+
+If the fix PR addresses violations from multiple policies and you want separate PRs per policy:
+
+```
+@nirmatabot split-pr <policy1> <policy2>
+```
+
+Example:
+
+```
+@nirmatabot split-pr disallow-privilege-escalation require-run-as-nonroot
+```
+
+This creates one new PR per listed policy, each containing only that policy's patches. Useful
+when different policies have different owners or review timelines.
+
+**Requesting an exception instead of a fix:**
+
+If a fix is not feasible or not desired, use the `request-exception` command to enter the
+[PolicyException workflow](#3-policyexception-workflow):
+
+```
+@nirmatabot request-exception <policy-name>
+@nirmatabot request-exception <policy-name> duration=30d reason="Upstream fix pending in v2.1"
+@nirmatabot request-exception <policy-name> duration=permanent reason="Third-party chart, no control over spec"
+```
+
+A `PolicyExceptionRequest` (PER) is created in NCH and routed to an approver. See
+[Section 3b](#3b-creating-exceptions-via-nirmatabot-remediation-prs) for what happens next.
+
+**GitHub vs GitLab:** The same `@nirmatabot` command syntax works for both platforms. GitHub
+triggers via the PR comment webhook; GitLab uses the GitLab comment event webhook.
+
+**Limitations:**
+
+| Limitation | Detail |
+|---|---|
+| 20-minute window | `@nirmatabot` commands are only accepted for 20 minutes after the fix PR is created. After that, `split-pr` must be done manually and exceptions must be filed via the NCH UI. |
+| LLM fix quality | Patches are AI-generated. Complex Helm templates with conditionals, `range` blocks, or shared helper templates may need manual review before merging. |
+| Ephemeral cluster (GitHub Actions) | The `kind` cluster is destroyed when the workflow job completes. If reconciliation does not finish within the job timeout, the fix PR may be incomplete. |
+| Policy group scope | Only predefined policy groups are available in the trigger UI. Arbitrary per-resource or per-namespace targeting is not supported at trigger time. |
+
+---
+
+## 3. PolicyException Workflow
 
 A PolicyException tells Kyverno to skip a specific policy check for a named resource. There are two
 ways to create one: through the NCH UI, or through `@nirmatabot` commands on a remediation PR.
 
 ---
 
-### 2a. Creating Exceptions via the NCH UI
+### 3a. Creating Exceptions via the NCH UI
 
 Use this path for ad-hoc exceptions, bulk management, or exceptions not tied to a fix PR.
 
@@ -76,7 +195,7 @@ Use this path for ad-hoc exceptions, bulk management, or exceptions not tied to 
 
 ---
 
-### 2b. Creating Exceptions via Nirmatabot (Remediation PRs)
+### 3b. Creating Exceptions via Nirmatabot (Remediation PRs)
 
 Use this path when reviewing a fix PR and deciding a fix is not feasible or not desired.
 
@@ -116,7 +235,7 @@ If the fix PR covers multiple policies and you want separate PRs:
 This creates one new PR per named policy, each containing only the fixes for that policy. Useful
 when different policies have different approvers or urgency.
 
-#### Open Issues
+#### Open Issues {#open-issues}
 
 | Issue | Description | Status |
 |---|---|---|
@@ -127,7 +246,7 @@ when different policies have different approvers or urgency.
 
 ---
 
-## 3. Enhancements
+## 4. Enhancements
 
 ### Proposed: Ticketing System Integration for Exception Requests
 
