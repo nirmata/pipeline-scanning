@@ -47,7 +47,7 @@ jobs:
         run: |
           set -euo pipefail
           curl -fsSL -o /usr/local/bin/nctl \
-            https://github.com/nirmata/pipeline-scanning/releases/download/nctl-fix-helm-exceptions/nctl-linux-amd64
+            https://github.com/nirmata/pipeline-scanning/releases/download/nctl-fix-per-exceptions/nctl-linux-amd64
           chmod +x /usr/local/bin/nctl
           echo /usr/local/bin >> "${GITHUB_PATH}"
           nctl version
