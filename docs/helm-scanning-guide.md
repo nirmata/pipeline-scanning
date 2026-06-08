@@ -35,8 +35,9 @@ location in your chart rather than to any rendered output.
 
 ![Architecture diagram](diagrams/architecture.svg)
 
-> **Note:** Once a PolicyExceptionRequest is approved in NCH, no YAML file is committed to the
-> repository. The next scan run automatically skips violations covered by the approved exception.
+> **Note (2a — NCH UI path):** Approved PERs suppress violations automatically on the next scan run — no YAML file is needed in the repository.
+>
+> **Note (2b — nirmatabot path):** A `PolicyException` YAML must be created and merged in the repository before violations are suppressed. Automatic creation of this YAML PR after PER approval is blocked by open issues [#417](https://github.com/nirmata/go-service-agent/issues/417) and [#418](https://github.com/nirmata/go-service-agent/issues/418).
 
 ---
 
@@ -97,9 +98,9 @@ created. Post your command as a comment on the PR within that window.
    affected resources
 3. A confirmation comment is posted on the PR with a direct link to the PER in NCH
 4. The PER enters `pendingApproval` state — an approver reviews it in NCH
-5. Once approved in NCH, the exception is recorded server-side. The next scan run against this
-   repository automatically skips violations covered by the exception — no YAML file needs to
-   be committed to the repository
+5. _(Pending [#418](#open-issues))_ Once approved, the agent should automatically open a PR in
+   this repository with the generated `PolicyException` YAML at `kyverno-exceptions/<name>.yaml`
+6. Merge that PR — subsequent scan runs will then skip the violations covered by the exception
 
 **GitHub vs GitLab:** The same command syntax works for both. GitHub triggers via the PR comment
 webhook; GitLab uses the GitLab comment event webhook.
@@ -120,6 +121,9 @@ when different policies have different approvers or urgency.
 | Issue | Description | Status |
 |---|---|---|
 | [#417](https://github.com/nirmata/go-service-agent/issues/417) | PER created via nirmatabot shows "All Violations" scope in NCH instead of the specific requested policy | Fix in PR [#415](https://github.com/nirmata/go-service-agent/pull/415) — pending merge |
+| [#418](https://github.com/nirmata/go-service-agent/issues/418) | No `PolicyException` YAML PR is created in the repository after the PER is approved in NCH | Design options in draft PR [#419](https://github.com/nirmata/go-service-agent/pull/419) — pending dev team decision |
+
+**Workaround for #418:** After approving a PER in NCH, manually download the `PolicyExceptionSpec.yaml` (**Exception Requests → [PER name] → Download YAML**), commit it to `kyverno-exceptions/<per-name>.yaml` in your repository, open a PR, and merge it. Subsequent scans will then skip the covered violations.
 
 ---
 
@@ -189,5 +193,6 @@ per policy group in NCH settings. No per-repository configuration is needed.
 |---|---|
 | Branch-only scoping (UI) | NCH UI exceptions scope to a branch or all branches — resource kind/name/namespace cannot be selected, so the exception applies to all resources that trigger the policy on that branch |
 | "All Violations" scope (nirmatabot) | PERs created via nirmatabot may show "All Violations" in NCH instead of the specific requested policy ([issue #417](https://github.com/nirmata/go-service-agent/issues/417)) |
+| No auto YAML PR (nirmatabot) | After a nirmatabot PER is approved, no `PolicyException` YAML PR is created automatically ([issue #418](https://github.com/nirmata/go-service-agent/issues/418)) — violations remain active until the YAML is manually committed and merged |
 | 20-minute nirmatabot window | `@nirmatabot request-exception` commands must be posted within 20 minutes of fix PR creation; the window is tied to the agent pod lifetime |
 | TTL management is manual | Exception renewal and revoke must be done via NCH UI; no automatic reminders or PR-based lifecycle |
