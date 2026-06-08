@@ -14,29 +14,29 @@ For setup instructions, see the [repository README](../README.md).
 
 The pipeline scanning integration:
 
-1. Renders your Helm chart and scans the output against Kyverno policies using `nctl scan helm`
+1. Scans your Helm chart repository for Kyverno policy violations using `nctl scan repository`
 2. Publishes scan findings to NCH for tracking and exception management
 3. Displays violations in the CI job summary with one-click actions:
    - **🛠️ Fix a violation** — triggers the Remediator Agent to open an automated fix PR
    - **📋 File an Exception** — navigates to the NCH findings page to request a policy exception
 4. On fix PRs, `@nirmatabot` commands let developers split PRs or request exceptions without leaving the PR review
 
-### Why Helm charts are scanned differently
+### How `nctl scan repository` handles Helm charts
 
-Helm charts contain Go templates, not raw Kubernetes YAML. The scanner first renders the chart
-(equivalent to `helm template`) before passing the output to `nctl`. This means:
+`nctl scan repository` detects Helm charts in the scanned path and processes them natively —
+no separate `helm template` step is needed. Violations are reported against the chart's resources
+as they would be deployed.
 
-- Violations are reported against the _rendered_ resource, but the fix must be applied to the
-  chart _source_ (template or `values.yaml`)
-- The Remediator Agent uses `HelmMapper` to trace a rendered violation back to its source template
-  file so fix PRs patch the right file
+When the Remediator Agent creates a fix PR, it uses **HelmMapper** to trace each violation back
+to the Helm chart source file (template or `values.yaml`) so the patch is applied to the correct
+location in your chart rather than to any rendered output.
 
 ### Architecture
 
 ![Architecture diagram](diagrams/architecture.svg)
 
-> **Note:** The dashed arrow from "PER in NCH" to "PolicyException YAML PR" represents a step that
-> is **not yet implemented** — see [Open issue #418](#open-issues).
+> **Note:** Once a PolicyExceptionRequest is approved in NCH, no YAML file is committed to the
+> repository. The next scan run automatically skips violations covered by the approved exception.
 
 ---
 
@@ -56,23 +56,22 @@ Use this path for ad-hoc exceptions, bulk management, or exceptions not tied to 
 1. In NCH, go to **Policies → Exception Requests → New Exception Request**
 2. Fill in the form:
    - **Policy name** — the Kyverno policy to exempt (e.g. `restrict-seccomp-strict`)
-   - **Resource** — kind, name, and namespace of the target resource
+   - **Branch scope** — a specific branch (e.g. `helm-app`) or **all branches**
    - **TTL** — duration (e.g. `30d`, `90d`) or `permanent`
    - **Justification** — reason for the exception
 3. Submit — the PER enters `pendingApproval` state
 4. An approver receives an email notification and reviews the request in NCH
-5. On approval, NCH generates a `PolicyExceptionSpec` YAML
-6. **Manual step:** download the YAML, commit it to `kyverno-exceptions/<name>.yaml` in your
-   repository, open a pull request, and merge it
+5. On approval, NCH records the exception. The next scan run against this repository
+   automatically skips violations covered by the approved exception — no YAML file needs
+   to be committed to the repository
 
 **Limitations:**
 
 | Limitation | Detail |
 |---|---|
-| Manual YAML deployment | Step 6 is always manual unless NCH GitOps integration is fully configured |
-| No automatic PR creation | NCH's PR-creation pipeline only fires for `DeploymentType: GitOps`; RemediatorAgent users are excluded |
-| TTL management is manual | Renewal and revoke PRs must be created and merged by hand |
-| No link to CI findings | Exceptions created via UI are not linked to specific scan run findings |
+| Branch-only scoping | Exceptions can only be scoped to a specific branch or all branches. **Resource kind, name, and namespace cannot be selected.** The exception applies to every resource that triggers the policy on the scoped branch. |
+| No link to CI findings | Exceptions created via UI are not linked to a specific scan run or fix PR |
+| TTL management is manual | Renewal and revoke must be done manually via NCH UI |
 
 ---
 
@@ -98,8 +97,9 @@ created. Post your command as a comment on the PR within that window.
    affected resources
 3. A confirmation comment is posted on the PR with a direct link to the PER in NCH
 4. The PER enters `pendingApproval` state — an approver reviews it in NCH
-5. _(Pending [issue #418](#open-issues))_ Once approved, the agent will automatically open a PR
-   with the generated `PolicyException` YAML in `kyverno-exceptions/<name>.yaml`
+5. Once approved in NCH, the exception is recorded server-side. The next scan run against this
+   repository automatically skips violations covered by the exception — no YAML file needs to
+   be committed to the repository
 
 **GitHub vs GitLab:** The same command syntax works for both. GitHub triggers via the PR comment
 webhook; GitLab uses the GitLab comment event webhook.
@@ -120,11 +120,6 @@ when different policies have different approvers or urgency.
 | Issue | Description | Status |
 |---|---|---|
 | [#417](https://github.com/nirmata/go-service-agent/issues/417) | PER created via nirmatabot shows "All Violations" scope in NCH instead of the specific requested policy | Fix in PR [#415](https://github.com/nirmata/go-service-agent/pull/415) — pending merge |
-| [#418](https://github.com/nirmata/go-service-agent/issues/418) | No `PolicyException` YAML PR is created in the repository after a PER is approved in NCH | Design options in draft PR [#419](https://github.com/nirmata/go-service-agent/pull/419) — pending dev team decision |
-
-**Workaround for #418 until the fix ships:** After approving a PER in NCH, manually download the
-`PolicyExceptionSpec.yaml` from NCH (**Exception Requests → [PER name] → Download YAML**), commit
-it to `kyverno-exceptions/<per-name>.yaml` in your repository, and merge the PR.
 
 ---
 
@@ -155,8 +150,8 @@ the `PolicyException` YAML PR in the repository.
 | Ticket body | Includes policy name, rule, resource kind/name/namespace, branch, link to NCH finding |
 | Ticket approval action | Configurable: Jira transition, GitHub label (e.g. `exception-approved`), ServiceNow approval |
 | Webhook → NCH | On ticket approval, NCH API call creates and approves the PER |
-| YAML PR creation | Follows the existing [issue #418](#open-issues) fix once it ships |
-| Ticket auto-close | After the YAML PR is merged, the ticket is updated with the PR link and closed |
+| Auto-skip on next scan | Once the PER is approved, the next scan run automatically skips matching violations |
+| Ticket auto-close | After the next clean scan, the ticket is updated with the result and closed |
 
 **Supported ticketing systems (proposed):**
 
@@ -175,9 +170,9 @@ per policy group in NCH settings. No per-repository configuration is needed.
 
 | Limitation | Detail |
 |---|---|
-| Helm rendering requires values | If your chart has required values without defaults, rendering may fail — provide a `ci/values.yaml` or set `HELM_ARGS` to supply test values |
+| Required Helm values | If your chart has required values without defaults, `nctl scan repository` may fail to process the chart — provide a `ci/values.yaml` with test values |
 | No incremental scanning | The full chart is re-scanned on every push — there is no diff-based mode |
-| Multi-document YAML | One violation entry per rendered resource; complex umbrella charts may produce many entries |
+| Multi-resource charts | One violation entry per resource; umbrella charts with many sub-charts may produce a large violations list |
 
 ### Remediation
 
@@ -192,7 +187,7 @@ per policy group in NCH settings. No per-repository configuration is needed.
 
 | Limitation | Detail |
 |---|---|
-| No auto YAML PR | After approving a PER via nirmatabot, no YAML PR is created automatically ([issue #418](#open-issues)) |
-| "All Violations" scope | PERs created via nirmatabot may show "All Violations" in NCH instead of the specific policy ([issue #417](#open-issues)) |
-| Revoke / expiry PRs | Not yet supported for RemediatorAgent-type PERs; must be done manually |
-| 20-minute approval window | Approvals that arrive after the nirmatabot window has closed do not trigger any automatic action (until [issue #418](#open-issues) is resolved) |
+| Branch-only scoping (UI) | NCH UI exceptions scope to a branch or all branches — resource kind/name/namespace cannot be selected, so the exception applies to all resources that trigger the policy on that branch |
+| "All Violations" scope (nirmatabot) | PERs created via nirmatabot may show "All Violations" in NCH instead of the specific requested policy ([issue #417](https://github.com/nirmata/go-service-agent/issues/417)) |
+| 20-minute nirmatabot window | `@nirmatabot request-exception` commands must be posted within 20 minutes of fix PR creation; the window is tied to the agent pod lifetime |
+| TTL management is manual | Exception renewal and revoke must be done via NCH UI; no automatic reminders or PR-based lifecycle |
