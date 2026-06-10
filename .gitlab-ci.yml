@@ -5,8 +5,6 @@
 #
 # Required CI/CD variables (set in GitLab project Settings > CI/CD > Variables):
 #   NIRMATA_URL          — Nirmata endpoint URL (e.g. https://nirmata.io)
-#   NIRMATA_USERID       — Nirmata user ID
-#   NIRMATA_USER_TOKEN   — Nirmata user token (masked)
 #   NIRMATA_TEAM_TOKEN   — Nirmata team token (masked)
 #
 # Optional CI/CD variable:
@@ -56,12 +54,6 @@ helm-policy-scan:
       git archive "origin/$POLICIES_BRANCH" "$POLICIES_PATH/" | tar -x
       echo "Policies fetched:"
       find "$POLICIES_PATH" -type f
-
-    - |
-      nctl login nch \
-        --userid "$NIRMATA_USERID" \
-        --token "$NIRMATA_USER_TOKEN" \
-        --url "$NIRMATA_URL"
 
     - |
       nctl scan repository \
