@@ -56,6 +56,10 @@ helm-policy-scan:
       find "$POLICIES_PATH" -type f
 
     - |
+      # Unset service account token so nctl uses NIRMATA_TEAM_TOKEN for publishing
+      unset NIRMATA_SERVICE_ACCOUNT_TOKEN
+      # Ensure the branch name is clean (GitLab injects gitlab-ci-token into the remote URL)
+      git checkout -B "$CI_COMMIT_REF_NAME"
       nctl scan repository \
         --policies="$POLICIES_PATH/seccomp" \
         --policies="$POLICIES_PATH/resource-limits" \
