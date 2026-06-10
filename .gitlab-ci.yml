@@ -65,8 +65,7 @@ helm-policy-scan:
       git remote set-url origin "https://gitlab.com/$CI_PROJECT_PATH.git"
       git checkout -B "$CI_COMMIT_REF_NAME"
       nctl scan repository \
-        --policies="$POLICIES_PATH/seccomp" \
-        --policies="$POLICIES_PATH/resource-limits" \
+        --policies="$POLICIES_PATH" \
         --url "$NIRMATA_URL" \
         --publish-token "$NIRMATA_TEAM_TOKEN" \
         2>&1 | tee /tmp/scan-output.txt
@@ -137,7 +136,7 @@ helm-policy-scan:
       echo "════════════════════════════════════════════════════════════"
       echo "  Branch  : $CI_COMMIT_BRANCH"
       echo "  Chart   : $CHART_PATH"
-      echo "  Policies: $POLICIES_BRANCH/$POLICIES_PATH/{seccomp,resource-limits}"
+      echo "  Policies: $POLICIES_BRANCH/$POLICIES_PATH/{baseline,restricted,seccomp,resource-limits}"
       echo "  Commit  : $CI_COMMIT_SHORT_SHA"
       echo "════════════════════════════════════════════════════════════"
 
