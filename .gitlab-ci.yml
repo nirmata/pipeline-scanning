@@ -56,16 +56,14 @@ helm-policy-scan:
       find "$POLICIES_PATH" -type f
 
     - |
-      # Unset service account token so nctl uses NIRMATA_TEAM_TOKEN for publishing
-      unset NIRMATA_SERVICE_ACCOUNT_TOKEN
-      # Ensure the branch name is clean (GitLab injects gitlab-ci-token into the remote URL)
+      # Strip gitlab-ci-token from the remote URL so nctl identifies the repo correctly in NCH
+      git remote set-url origin "https://gitlab.com/$CI_PROJECT_PATH.git"
       git checkout -B "$CI_COMMIT_REF_NAME"
       nctl scan repository \
         --policies="$POLICIES_PATH/seccomp" \
         --policies="$POLICIES_PATH/resource-limits" \
-        --url "$NIRMATA_URL" \
-        --token "$NIRMATA_TEAM_TOKEN" \
-        --publish 2>&1 | tee /tmp/scan-output.txt
+        --publish-token "$NIRMATA_TEAM_TOKEN" \
+        2>&1 | tee /tmp/scan-output.txt
       true  # violations are handled by the parse + fail steps below
 
     - |
