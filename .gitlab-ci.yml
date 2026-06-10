@@ -62,11 +62,7 @@ helm-policy-scan:
       export NIRMATA_TOKEN="$NIRMATA_TEAM_TOKEN"
       # Compute a stable report source ID = base64url(sha256(URL+token)).
       # This mirrors nctl's own hash logic and bypasses the ~/.nirmata/config requirement.
-      REPORT_SOURCE_ID=$(python3 -c "
-import hashlib, base64, sys
-data = (sys.argv[1] + sys.argv[2]).encode('utf-8')
-print(base64.urlsafe_b64encode(hashlib.sha256(data).digest()).decode())
-" "$NIRMATA_URL" "$NIRMATA_TEAM_TOKEN")
+      REPORT_SOURCE_ID=$(python3 -c "import hashlib,base64,sys; data=(sys.argv[1]+sys.argv[2]).encode(); print(base64.urlsafe_b64encode(hashlib.sha256(data).digest()).decode())" "$NIRMATA_URL" "$NIRMATA_TEAM_TOKEN")
       # Strip gitlab-ci-token from remote URL so nctl sees the clean repo URL
       git remote set-url origin "https://gitlab.com/$CI_PROJECT_PATH.git"
       git checkout -B "$CI_COMMIT_REF_NAME"
