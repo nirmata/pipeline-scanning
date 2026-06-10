@@ -1,0 +1,211 @@
+# Scans the Helm chart against custom Kyverno policies from the kyverno-policies branch.
+# Publishes results to NCH, then shows per-violation action links in job output:
+#   Fix          — triggers the remediator child pipeline to open a fix MR
+#   Exception    — links to NCH where the user can request a policy exception
+#
+# Required CI/CD variables (set in GitLab project Settings > CI/CD > Variables):
+#   NIRMATA_URL          — Nirmata endpoint URL (e.g. https://nirmata.io)
+#   NIRMATA_USERID       — Nirmata user ID
+#   NIRMATA_USER_TOKEN   — Nirmata user token (masked)
+#   NIRMATA_TEAM_TOKEN   — Nirmata team token (masked)
+#
+# Optional CI/CD variable:
+#   POLICY_GROUP   — which violations to fix when triggering the remediator manually
+#                    values: "All violations" | "Seccomp violations" | "Resource limit violations"
+#                    (defaults to "All violations")
+
+variables:
+  CHART_PATH: "charts/my-nginx-chart"
+  POLICIES_BRANCH: "kyverno-policies"
+  POLICIES_PATH: "policies"
+  GIT_DEPTH: "0"
+  POLICY_GROUP:
+    value: "All violations"
+    description: "Which policy group to fix (used only when manually triggering the remediator pipeline)"
+    options:
+      - "All violations"
+      - "Seccomp violations"
+      - "Resource limit violations"
+
+stages:
+  - scan
+  - remediate
+
+helm-policy-scan:
+  stage: scan
+  image: ubuntu:22.04
+  timeout: 20 minutes
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == "helm-app"'
+    - if: '$CI_PIPELINE_SOURCE == "schedule"'
+  before_script:
+    - apt-get update -qq && apt-get install -y -qq curl git jq python3
+  script:
+    - |
+      curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+      helm version
+
+    - |
+      curl -fsSL -o /usr/local/bin/nctl \
+        https://github.com/nirmata/pipeline-scanning/releases/download/nctl-fix-per-exceptions/nctl-linux-amd64
+      chmod +x /usr/local/bin/nctl
+      nctl version
+
+    - |
+      git fetch origin "$POLICIES_BRANCH"
+      git archive "origin/$POLICIES_BRANCH" "$POLICIES_PATH/" | tar -x
+      echo "Policies fetched:"
+      find "$POLICIES_PATH" -type f
+
+    - |
+      nctl login nch \
+        --userid "$NIRMATA_USERID" \
+        --token "$NIRMATA_USER_TOKEN" \
+        --url "$NIRMATA_URL"
+
+    - |
+      nctl scan repository \
+        --policies="$POLICIES_PATH/seccomp" \
+        --policies="$POLICIES_PATH/resource-limits" \
+        --url "$NIRMATA_URL" \
+        --token "$NIRMATA_TEAM_TOKEN" \
+        --publish 2>&1 | tee /tmp/scan-output.txt
+      true  # violations are handled by the parse + fail steps below
+
+    - |
+      # Strip ANSI escape codes so text matching works reliably
+      sed 's/\x1b\[[0-9;]*[a-zA-Z]//g' /tmp/scan-output.txt > /tmp/scan-clean.txt 2>/dev/null || true
+
+      # Extract resource name from "resource: <name>:" line
+      RESOURCE=$(sed -n 's/.*resource: \([^: ]*\).*/\1/p' /tmp/scan-clean.txt | head -1 || true)
+      RESOURCE="${RESOURCE:-unknown}"
+
+      rm -f violations.json
+
+      # Parse each "| policy/rule | fail | ... |" row
+      while IFS='|' read -r _ policy_rule result _rest; do
+        policy_rule=$(echo "$policy_rule" | xargs 2>/dev/null || true)
+        result=$(echo "$result" | xargs 2>/dev/null || true)
+        if [ "$result" = "fail" ] && echo "$policy_rule" | grep -q "/"; then
+          policy="${policy_rule%%/*}"
+          rule="${policy_rule#*/}"
+          case "$policy" in
+            require-requests-limits) sev="high" ;;
+            *) sev="medium" ;;
+          esac
+          jq -n \
+            --arg resource "$RESOURCE" \
+            --arg policy   "$policy" \
+            --arg rule     "$rule" \
+            --arg severity "$sev" \
+            '{resource:$resource,policy:$policy,rule:$rule,severity:$severity}' \
+            >> violations.json
+        fi
+      done < /tmp/scan-clean.txt
+
+      COUNT=0
+      if [ -f violations.json ] && [ -s violations.json ]; then
+        COUNT=$(grep -c '^{' violations.json || true)
+      fi
+
+      echo "VIOLATIONS_COUNT=$COUNT" >> scan.env
+      if [ "$COUNT" -gt 0 ]; then
+        echo "VIOLATIONS_FOUND=true" >> scan.env
+      else
+        echo "VIOLATIONS_FOUND=false" >> scan.env
+      fi
+      echo "Parsed ${COUNT} violation(s)"
+
+    - |
+      COUNT=$(grep VIOLATIONS_COUNT scan.env | cut -d= -f2)
+      FOUND=$(grep VIOLATIONS_FOUND scan.env | cut -d= -f2)
+
+      PROJECT_URL="${CI_PROJECT_URL}"
+      REMEDIATE_URL="${CI_PROJECT_URL}/-/pipelines/new?ref=helm-app"
+
+      ENCODED_REPO=$(python3 -c "import urllib.parse; print(urllib.parse.quote('${PROJECT_URL}', safe=''))")
+      if echo "${NIRMATA_URL:-}" | grep -q "://nirmata\.io"; then
+        WEBCLIENT_BASE="https://www.nirmata.io"
+      else
+        WEBCLIENT_BASE="${NIRMATA_URL:-https://nirmata.io}"
+      fi
+      NCH_EXCEPTION_URL="${WEBCLIENT_BASE}/webclient/#policy-reports/repositories/${ENCODED_REPO}/findings"
+
+      echo ""
+      echo "════════════════════════════════════════════════════════════"
+      echo "  Helm Policy Scan Summary"
+      echo "════════════════════════════════════════════════════════════"
+      echo "  Branch  : $CI_COMMIT_BRANCH"
+      echo "  Chart   : $CHART_PATH"
+      echo "  Policies: $POLICIES_BRANCH/$POLICIES_PATH/{seccomp,resource-limits}"
+      echo "  Commit  : $CI_COMMIT_SHORT_SHA"
+      echo "════════════════════════════════════════════════════════════"
+
+      if [ "$FOUND" = "true" ]; then
+        echo ""
+        echo "  ❌ $COUNT violation(s) detected"
+        echo ""
+        echo "  For each violation, choose an action:"
+        echo "  🛠  Fix a violation    → Trigger the remediator pipeline (see instructions below)"
+        echo "  📋 File an Exception  → $NCH_EXCEPTION_URL"
+        echo ""
+        echo "  ┌──────────────────────────────────────────────────────"
+        echo "  │  VIOLATION REPORT"
+        echo "  ├──────────────────────────────────────────────────────"
+        printf "  │  %-30s %-30s %-30s %s\n" "RESOURCE" "POLICY" "RULE" "SEVERITY"
+        echo "  │  ─────────────────────────────────────────────────"
+        jq -r '.resource + "\t" + .policy + "\t" + .rule + "\t" + .severity' violations.json 2>/dev/null | \
+          while IFS=$(printf '\t') read -r res pol rule sev; do
+            printf "  │  %-30s %-30s %-30s %s\n" "$res" "$pol" "$rule" "$sev"
+          done
+        echo "  └──────────────────────────────────────────────────────"
+        echo ""
+        echo "  ════════════════════════════════════════════════════════"
+        echo "  HOW TO ACT ON A VIOLATION"
+        echo "  ════════════════════════════════════════════════════════"
+        echo ""
+        echo "  Option 1 — 🛠  Fix a violation (opens a Merge Request)"
+        echo ""
+        echo "  1. Open: ${REMEDIATE_URL}"
+        echo "     (the 'helm-app' branch is pre-selected for you)"
+        echo "  2. Use the POLICY_GROUP dropdown to choose what to fix:"
+        echo "       'All violations'              — fixes both seccomp + resource limits in one MR"
+        echo "       'Seccomp violations'          — adds seccompProfile: RuntimeDefault"
+        echo "       'Resource limit violations'   — adds CPU/memory requests and limits"
+        echo "  3. Click 'New pipeline'"
+        echo "  4. The remediator runs automatically and creates an MR with the fix."
+        echo ""
+        echo "  Option 2 — 📋 File an Exception (via NCH)"
+        echo ""
+        echo "  1. Open: $NCH_EXCEPTION_URL"
+        echo "  2. Select the violation and submit an exception request"
+        echo "  3. Once approved, future scans will pass"
+        echo ""
+        echo "  ════════════════════════════════════════════════════════"
+
+        exit 1
+      else
+        echo ""
+        echo "  ✅ No violations found — chart is compliant"
+        echo ""
+      fi
+
+  artifacts:
+    when: always
+    paths:
+      - violations.json
+      - scan.env
+    reports:
+      dotenv: scan.env
+    expire_in: 7 days
+
+trigger-remediator:
+  stage: remediate
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "web"'
+    - if: '$CI_PIPELINE_SOURCE == "api"'
+  variables:
+    POLICY_GROUP: "$POLICY_GROUP"
+  trigger:
+    include: remediator-pipeline.yml
+    strategy: depend
