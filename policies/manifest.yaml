@@ -1,4 +1,34 @@
 policies:
+  # ── Group entries (all policies in a group) ───────────────────────────────
+  - name: seccomp-group
+    displayName: "Seccomp violations"
+    path: policies/seccomp/
+    ref: kyverno-policies
+    resourceName: nginx-seccomp-fix
+    branchPrefix: remediation-seccomp-
+
+  - name: resource-limits-group
+    displayName: "Resource limit violations"
+    path: policies/resource-limits/
+    ref: kyverno-policies
+    resourceName: nginx-resource-limits-fix
+    branchPrefix: remediation-resource-limits-
+
+  - name: pss-baseline
+    displayName: "Baseline violations"
+    path: policies/baseline/
+    ref: kyverno-policies
+    resourceName: nginx-baseline-fix
+    branchPrefix: remediation-baseline-
+
+  - name: pss-restricted
+    displayName: "Restricted violations"
+    path: policies/restricted/
+    ref: kyverno-policies
+    resourceName: nginx-restricted-fix
+    branchPrefix: remediation-restricted-
+
+  # ── Individual seccomp policies ───────────────────────────────────────────
   - name: restrict-seccomp-strict
     displayName: "restrict-seccomp-strict"
     path: policies/seccomp/restrict-seccomp-strict.yaml
@@ -6,6 +36,7 @@ policies:
     resourceName: nginx-seccomp-fix
     branchPrefix: remediation-seccomp-
 
+  # ── Individual resource-limits policies ───────────────────────────────────
   - name: require-requests-limits
     displayName: "require-requests-limits"
     path: policies/resource-limits/require_pod_requests_limits.yaml
@@ -13,6 +44,78 @@ policies:
     resourceName: nginx-resource-limits-fix
     branchPrefix: remediation-resource-limits-
 
+  # ── Individual baseline (PSS) policies ───────────────────────────────────
+  - name: disallow-capabilities
+    displayName: "disallow-capabilities"
+    path: policies/baseline/disallow-capabilities.yaml
+    ref: kyverno-policies
+    resourceName: nginx-baseline-fix
+    branchPrefix: remediation-baseline-
+
+  - name: disallow-host-namespaces
+    displayName: "disallow-host-namespaces"
+    path: policies/baseline/disallow-host-namespaces.yaml
+    ref: kyverno-policies
+    resourceName: nginx-baseline-fix
+    branchPrefix: remediation-baseline-
+
+  - name: disallow-host-path
+    displayName: "disallow-host-path"
+    path: policies/baseline/disallow-host-path.yaml
+    ref: kyverno-policies
+    resourceName: nginx-baseline-fix
+    branchPrefix: remediation-baseline-
+
+  - name: disallow-host-ports
+    displayName: "disallow-host-ports"
+    path: policies/baseline/disallow-host-ports.yaml
+    ref: kyverno-policies
+    resourceName: nginx-baseline-fix
+    branchPrefix: remediation-baseline-
+
+  - name: disallow-privileged-containers
+    displayName: "disallow-privileged-containers"
+    path: policies/baseline/disallow-privileged-containers.yaml
+    ref: kyverno-policies
+    resourceName: nginx-baseline-fix
+    branchPrefix: remediation-baseline-
+
+  - name: disallow-proc-mount
+    displayName: "disallow-proc-mount"
+    path: policies/baseline/disallow-proc-mount.yaml
+    ref: kyverno-policies
+    resourceName: nginx-baseline-fix
+    branchPrefix: remediation-baseline-
+
+  - name: disallow-selinux
+    displayName: "disallow-selinux"
+    path: policies/baseline/disallow-selinux.yaml
+    ref: kyverno-policies
+    resourceName: nginx-baseline-fix
+    branchPrefix: remediation-baseline-
+
+  - name: restrict-apparmor-profiles
+    displayName: "restrict-apparmor-profiles"
+    path: policies/baseline/restrict-apparmor-profiles.yaml
+    ref: kyverno-policies
+    resourceName: nginx-baseline-fix
+    branchPrefix: remediation-baseline-
+
+  - name: restrict-seccomp
+    displayName: "restrict-seccomp"
+    path: policies/baseline/restrict-seccomp.yaml
+    ref: kyverno-policies
+    resourceName: nginx-baseline-fix
+    branchPrefix: remediation-baseline-
+
+  - name: restrict-sysctls
+    displayName: "restrict-sysctls"
+    path: policies/baseline/restrict-sysctls.yaml
+    ref: kyverno-policies
+    resourceName: nginx-baseline-fix
+    branchPrefix: remediation-baseline-
+
+  # ── Individual restricted (PSS) policies ─────────────────────────────────
   - name: disallow-capabilities-strict
     displayName: "disallow-capabilities-strict"
     path: policies/restricted/disallow-capabilities-strict.yaml
