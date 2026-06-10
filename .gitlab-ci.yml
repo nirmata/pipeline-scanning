@@ -56,11 +56,17 @@ helm-policy-scan:
       find "$POLICIES_PATH" -type f
 
     - |
-      # The runner environment may contain an invalid NIRMATA_SERVICE_ACCOUNT_TOKEN
-      # (from the remediator agent). Unset it so nctl does not attempt JWT exchange.
-      # Instead, expose the team token as NIRMATA_TOKEN for API-key auth (no JWT needed).
+      # Unset invalid SAT so nctl does not attempt JWT exchange.
+      # NIRMATA_TOKEN enables API-key auth via NewForScanPublish (no JWT, no config file needed).
       unset NIRMATA_SERVICE_ACCOUNT_TOKEN
       export NIRMATA_TOKEN="$NIRMATA_TEAM_TOKEN"
+      # Compute a stable report source ID = base64url(sha256(URL+token)).
+      # This mirrors nctl's own hash logic and bypasses the ~/.nirmata/config requirement.
+      REPORT_SOURCE_ID=$(python3 -c "
+import hashlib, base64, sys
+data = (sys.argv[1] + sys.argv[2]).encode('utf-8')
+print(base64.urlsafe_b64encode(hashlib.sha256(data).digest()).decode())
+" "$NIRMATA_URL" "$NIRMATA_TEAM_TOKEN")
       # Strip gitlab-ci-token from remote URL so nctl sees the clean repo URL
       git remote set-url origin "https://gitlab.com/$CI_PROJECT_PATH.git"
       git checkout -B "$CI_COMMIT_REF_NAME"
@@ -69,7 +75,7 @@ helm-policy-scan:
         --policies="$POLICIES_PATH/resource-limits" \
         --url "$NIRMATA_URL" \
         --publish-token "$NIRMATA_TEAM_TOKEN" \
-        -v 5 \
+        --report-sourceid "$REPORT_SOURCE_ID" \
         2>&1 | tee /tmp/scan-output.txt
       true  # violations are handled by the parse + fail steps below
 
