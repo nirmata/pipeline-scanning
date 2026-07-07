@@ -159,21 +159,18 @@ nirmata:
   # Defaults to "api-token"
   apiTokenSecretKey: "api-token"
 
-# ToolConfig for GitLab (used by CreatePR — for type=gitlab the action
-# actually creates a Merge Request despite the name)
+# ToolConfig for GitHub (used by CreatePR to open a Pull Request)
 tool:
   enabled: true
-  name: gitlab-tool
-  type: gitlab
+  name: github-tool
+  type: github
 
-  # Only "pat" is supported for GitLab today.
-  # GitHub-specific methods ("nirmata-app", "app") will not work with type=gitlab.
   credentials:
     method: pat
 
     pat:
       secret:
-        name: "gitlab-pat-token"
+        name: "github-pat-token"
         key: "token"
 
   defaults:
@@ -195,16 +192,16 @@ remediator:
     vcs:
       policies:
         - name: seccomp-policy
-          repo: https://gitlab.com/sagar-nirmata/pipeline-scanning.git
+          repo: https://github.com/nirmata/pipeline-scanning.git
           path: policies/seccomp
           ref: kyverno-policies
         - name: resource-limits-policy
-          repo: https://gitlab.com/sagar-nirmata/pipeline-scanning.git
+          repo: https://github.com/nirmata/pipeline-scanning.git
           path: policies/resource-limits
           ref: kyverno-policies
       resources:
         - name: nginx-all-fixes
-          repo: https://gitlab.com/sagar-nirmata/pipeline-scanning.git
+          repo: https://github.com/nirmata/pipeline-scanning.git
           path: ./
           ref: helm-app
           policyRefs:
@@ -217,7 +214,7 @@ remediator:
       intervalMinutes: 1
     actions:
       - type: CreatePR
-        toolRefName: gitlab-tool
+        toolRefName: github-tool
 
 # Agent Configuration
 # Deploy a custom Agent resource for autonomous operations
