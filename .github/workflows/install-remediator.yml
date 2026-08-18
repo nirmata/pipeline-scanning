@@ -174,11 +174,17 @@ jobs:
             EXTRA_VALUES="--values ${{ steps.patch.outputs.patch_file }}"
           fi
 
-          helm upgrade --install remediator-agent /tmp/kyverno-charts/charts/go-agent-remediator \
+          # Use the nirmata-agent chart, not go-agent-remediator. The latter is
+          # pinned at appVersion v0.2.2-rc.6 and hardcodes the image tag to
+          # .Chart.AppVersion (ignoring image.tag), so it always deploys an agent
+          # built against go-llm-apps v0.0.43 — which panics with a nil pointer
+          # dereference on any failed LLM request (fixed in v0.0.45+).
+          # nirmata-agent honours image.tag, so remediator-helm-values.yaml
+          # controls the image.
+          helm upgrade --install remediator-agent /tmp/kyverno-charts/charts/nirmata-agent \
             --namespace nirmata \
             --values remediator-helm-values.yaml \
             ${EXTRA_VALUES} \
-            --set image.repository=ghcr.io/nirmata/go-agent-remediator \
             --wait \
             --timeout 10m
           echo "Remediator agent installed successfully."
@@ -205,15 +211,18 @@ jobs:
 
       - name: Bounce agent to trigger immediate remediation cycle
         run: |
+          # The nirmata-agent chart names the Deployment "nirmata-agent"
+          # (hardcoded helper), independent of the "remediator-agent" release
+          # name. The instance label below still matches the release name.
           echo "Scaling down remediator agent..."
-          kubectl scale deployment remediator-agent -n nirmata --replicas=0
+          kubectl scale deployment nirmata-agent -n nirmata --replicas=0
           kubectl wait --for=delete pod -l app.kubernetes.io/instance=remediator-agent -n nirmata --timeout=60s
 
           echo "Deleting all RemediationRecord CRs..."
           kubectl delete remediationrecord --all -n nirmata 2>/dev/null || echo "(no RemediationRecords found)"
 
           echo "Scaling back up..."
-          kubectl scale deployment remediator-agent -n nirmata --replicas=1
+          kubectl scale deployment nirmata-agent -n nirmata --replicas=1
           kubectl wait --for=condition=ready pod -l app.kubernetes.io/instance=remediator-agent -n nirmata --timeout=120s
           echo "Agent is back up."
 
@@ -283,7 +292,7 @@ jobs:
             echo "| Cluster      | \`remediator-demo\` (kind) |"
             echo "| Namespace    | \`nirmata\` |"
             echo "| Policy group | \`${{ inputs.policy_group }}\` |"
-            echo "| Chart        | \`go-agent-remediator\` from nirmata/kyverno-charts |"
+            echo "| Chart        | \`nirmata-agent\` from nirmata/kyverno-charts |"
             echo ""
           } >> "$GITHUB_STEP_SUMMARY"
 
