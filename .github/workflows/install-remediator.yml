@@ -155,19 +155,11 @@ jobs:
             --from-literal=token="${{ secrets.PAT }}" \
             -n nirmata
 
-      # remediator-helm-values.yaml sets imagePullSecrets: [ghcr-pull-secret]
-      # and pulls the agent from ghcr.io/nsagark/go-nirmata-agent, which is a
-      # private package. The previous chart happened to use a public image, so
-      # the missing secret went unnoticed; without it the pod sits in
-      # ImagePullBackOff and `helm --wait` blocks until it times out.
-      - name: Create GHCR pull secret
-        run: |
-          kubectl create secret docker-registry ghcr-pull-secret \
-            --docker-server=ghcr.io \
-            --docker-username="${{ github.actor }}" \
-            --docker-password="${{ secrets.GHCR_TOKEN }}" \
-            --docker-email=ci@example.com \
-            -n nirmata
+      # No ghcr-pull-secret step: the agent image is a public GHCR package and
+      # pulls anonymously. Creating the secret actively breaks the pull — kubelet
+      # prefers it over anonymous access, and GHCR_TOKEN/github.actor are rejected
+      # by ghcr.io's token endpoint with 403. Only reintroduce this alongside a
+      # private image, and verify the token has read:packages for that namespace.
 
       - name: Create repo-namespace-mapping ConfigMap
         run: |

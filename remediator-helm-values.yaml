@@ -21,11 +21,13 @@ image:
   tag: v0.2.9-rc.3
   pullPolicy: IfNotPresent
 
-# Pull the agent image from a private GHCR package. The remediator-pipeline.yml
-# creates the `ghcr-pull-secret` docker-registry secret in the nirmata namespace
-# from the GHCR_TOKEN CI/CD variable before helm install.
-imagePullSecrets:
-  - name: ghcr-pull-secret
+# No pull secret: ghcr.io/nirmata/go-nirmata-agent is a public package and pulls
+# anonymously. This must stay empty while the image is public — kubelet prefers
+# an imagePullSecret over anonymous access, so pointing at a secret whose token
+# lacks read:packages makes ghcr.io's token endpoint return 403 and the pull
+# fails, where no secret at all would have succeeded. Bad credentials are worse
+# than none. Re-add a secret here only alongside a genuinely private image.
+imagePullSecrets: []
 nameOverride: ""
 fullnameOverride: ""
 
