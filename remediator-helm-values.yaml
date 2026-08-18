@@ -6,11 +6,19 @@ crds:
 replicaCount: 1
 
 image:
-  # HelmMapper-on-GitLab fix (PR nirmata/go-service-agent#402, merged into main).
-  # Built from commit 7fd5f44 with `ko build`. Tag `helm-mapper-fix` is stable;
-  # tag `7fd5f44` pins to the exact commit. Multi-arch (linux/amd64,arm64).
-  repository: ghcr.io/nsagark/go-nirmata-agent
-  tag: helm-mapper-fix
+  # Official public image. Previously ghcr.io/nsagark/go-nirmata-agent:helm-mapper-fix,
+  # a personal `ko build` of commit 7fd5f44 in a private GHCR package — it required
+  # a ghcr-pull-secret whose token had to cover the nsagark namespace.
+  #
+  # v0.2.9-rc.3 is public and supersedes that build:
+  #   * contains the HelmMapper-on-GitLab fix (PR nirmata/go-service-agent#402,
+  #     merge commit 7fd5f442) — v0.2.9-rc.3 is 10 commits ahead, 0 behind it
+  #   * links go-llm-apps v0.0.46, which has the httpResp == nil guards. Builds
+  #     on go-llm-apps < v0.0.45 panic with a nil pointer dereference on any
+  #     failed LLM request (defer httpResp.Body.Close() registered before the
+  #     error check), which masks the real error and crashes the reconcile.
+  repository: ghcr.io/nirmata/go-nirmata-agent
+  tag: v0.2.9-rc.3
   pullPolicy: IfNotPresent
 
 # Pull the agent image from a private GHCR package. The remediator-pipeline.yml
