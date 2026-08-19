@@ -180,6 +180,14 @@ jobs:
             EXTRA_VALUES="--values ${{ steps.patch.outputs.patch_file }}"
           fi
 
+          # Point the agent at the same Nirmata environment as the rest of the
+          # repo (helm-policy-scan.yml). The service-account token must have
+          # been issued by this environment or the JWT exchange fails.
+          ENDPOINT_SET=""
+          if [[ -n "${{ vars.NIRMATA_URL }}" ]]; then
+            ENDPOINT_SET="--set nirmata.endpoint=${{ vars.NIRMATA_URL }}"
+          fi
+
           # Use the nirmata-agent chart, not go-agent-remediator. The latter is
           # pinned at appVersion v0.2.2-rc.6 and hardcodes the image tag to
           # .Chart.AppVersion (ignoring image.tag), so it always deploys an agent
@@ -191,6 +199,7 @@ jobs:
             --namespace nirmata \
             --values remediator-helm-values.yaml \
             ${EXTRA_VALUES} \
+            ${ENDPOINT_SET} \
             --wait \
             --timeout 10m
           echo "Remediator agent installed successfully."

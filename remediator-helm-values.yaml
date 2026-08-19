@@ -141,8 +141,14 @@ llm:
     model: ""
 
 nirmata:
-  # Nirmata endpoint URL - used to set the --url command-line flag
-  endpoint: "https://devtest2.nirmata.co"
+  # Nirmata endpoint URL - used to set the --url command-line flag.
+  # Must be the environment that issued the service-account token below —
+  # tokens are environment-specific, and a mismatch fails the JWT exchange
+  # ("authentication failed: ... Failed to fetch JWT token"). This default
+  # matches the repo's NIRMATA_URL variable used by helm-policy-scan.yml;
+  # install-remediator.yml overrides it from that variable when set.
+  # (Was https://devtest2.nirmata.co, valid only for tokens minted there.)
+  endpoint: "https://nirmata.io"
 
   # Authentication method selection
   # Options: "serviceAccountToken" or "apiToken"
