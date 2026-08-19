@@ -138,7 +138,13 @@ llm:
       # Defaults to standard header key
       key: "api-key"
   nirmataAI:
-    model: ""
+    # Pin a current model. Left empty, the agent's bundled go-llm-apps v0.0.46
+    # falls back to us.anthropic.claude-sonnet-4-20250514-v1:0 (May 2025), which
+    # repeatedly emits CUDL patches with context lines after change lines and
+    # exhausts all 10 validation retries — no PR ever gets created. Upstream
+    # go-llm-apps now defaults to claude-sonnet-5 (also accepts
+    # us.anthropic.claude-sonnet-4-6 as a fallback if the service rejects this).
+    model: "us.anthropic.claude-sonnet-5"
 
 nirmata:
   # Nirmata endpoint URL - used to set the --url command-line flag.
