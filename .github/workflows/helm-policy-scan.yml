@@ -55,11 +55,15 @@ jobs:
         continue-on-error: true
         run: |
           set -euo pipefail
-          git clone https://github.com/nirmata/pipeline-scanning.git pipeline-scanning
-          cd pipeline-scanning && git checkout kyverno-policies && cd ..
+          # Clone policies OUTSIDE the workspace: the kyverno-policies branch
+          # also carries charts/my-nginx-chart, and the later
+          # "nctl scan repository" publish step scans the whole workspace —
+          # an in-workspace clone adds a duplicate chart copy and every
+          # violation gets counted once per copy in NCH.
+          git clone --depth 1 --branch "${POLICIES_BRANCH}" https://github.com/${{ github.repository }}.git "${RUNNER_TEMP}/policies-repo"
           nctl scan helm -r "${CHART_PATH}" \
-            -p "pipeline-scanning/policies/seccomp" \
-            -p "pipeline-scanning/policies/resource-limits" \
+            -p "${RUNNER_TEMP}/policies-repo/policies/seccomp" \
+            -p "${RUNNER_TEMP}/policies-repo/policies/resource-limits" \
             -o json \
             | tee report.json
 
@@ -78,11 +82,18 @@ jobs:
           # cloned a GitLab mirror and passed the whole policies/ tree
           # (17 policies: baseline + restricted + seccomp + resource-limits),
           # publishing 15 findings while the summary reported 2.
-          git clone --depth 1 --branch "${POLICIES_BRANCH}" https://github.com/${{ github.repository }}.git kyp
+          # Reuse the out-of-workspace policies clone from the scan step
+          # (clone it here if that step was skipped). It must NOT live in the
+          # workspace: this scan walks the whole workspace, and the
+          # kyverno-policies branch also contains the chart, so an
+          # in-workspace clone duplicates every violation in NCH.
+          if [[ ! -d "${RUNNER_TEMP}/policies-repo" ]]; then
+            git clone --depth 1 --branch "${POLICIES_BRANCH}" https://github.com/${{ github.repository }}.git "${RUNNER_TEMP}/policies-repo"
+          fi
           nctl login --url "${NIRMATA_URL}" --userid sagarkundral777@gmail.com --token "${{ secrets.NIRMATA_USER_TOKEN }}"
           nctl scan repository \
-            --policies="kyp/${POLICIES_PATH}/seccomp" \
-            --policies="kyp/${POLICIES_PATH}/resource-limits" \
+            --policies="${RUNNER_TEMP}/policies-repo/${POLICIES_PATH}/seccomp" \
+            --policies="${RUNNER_TEMP}/policies-repo/${POLICIES_PATH}/resource-limits" \
             --publish-token "${{ secrets.NIRMATA_TEAM_TOKEN }}"
 
       - name: Parse violations
