@@ -72,11 +72,17 @@ jobs:
             echo "NIRMATA_URL variable is not set — skipping NCH publish."
             exit 0
           fi
-          git clone https://gitlab.com/sagar-nirmata/pipeline-scanning.git kyp
-          cd kyp && git checkout kyverno-policies && cd ..
+          # Scan with the SAME two policy dirs, from the SAME GitHub policies
+          # branch, as the "Scan Helm chart" step above — so the findings NCH
+          # shows match the violations in the job summary. Previously this
+          # cloned a GitLab mirror and passed the whole policies/ tree
+          # (17 policies: baseline + restricted + seccomp + resource-limits),
+          # publishing 15 findings while the summary reported 2.
+          git clone --depth 1 --branch "${POLICIES_BRANCH}" https://github.com/${{ github.repository }}.git kyp
           nctl login --url "${NIRMATA_URL}" --userid sagarkundral777@gmail.com --token "${{ secrets.NIRMATA_USER_TOKEN }}"
           nctl scan repository \
-            --policies="kyp/policies" \
+            --policies="kyp/${POLICIES_PATH}/seccomp" \
+            --policies="kyp/${POLICIES_PATH}/resource-limits" \
             --publish-token "${{ secrets.NIRMATA_TEAM_TOKEN }}"
 
       - name: Parse violations
