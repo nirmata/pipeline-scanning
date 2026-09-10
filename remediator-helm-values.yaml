@@ -101,7 +101,11 @@ resources:
 # Logging configuration
 logging:
   # Set verbosity level (0=info, 1=audit+info, 2=debug+audit+info)
-  verbosity: 0
+  # 5 = diagnostic: logs every LLM response (klog.V(5) "response: %+v" in
+  # go-llm-apps conversation.go), read_helm_file byte counts (V3) and CUDL
+  # validation failures (V3). Needed to see why the plan loop re-reads
+  # values.yaml without emitting patches. Drop back to 0 once resolved.
+  verbosity: 5
   # Enable audit logging (if true, overrides verbosity=0 to ensure audit logs are visible)
   enableAudit: false
 

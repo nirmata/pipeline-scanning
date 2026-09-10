@@ -241,7 +241,7 @@ jobs:
           kubectl wait --for=condition=ready pod -l app.kubernetes.io/instance=remediator-agent -n nirmata --timeout=120s
           echo "Agent is back up."
 
-      - name: Tail agent logs until PR(s) created (max 8 minutes)
+      - name: Tail agent logs until PR(s) created (max 20 minutes)
         run: |
           # All policy groups produce one PR (single resource entry with all policyRefs)
           EXPECTED_PRS=1
@@ -255,9 +255,12 @@ jobs:
           TMPCOUNT=$(mktemp)
           echo 0 > "${TMPCOUNT}"
 
-          timeout 480 kubectl logs -n nirmata "${POD}" --follow | \
+          timeout 1200 kubectl logs -n nirmata "${POD}" --follow | \
             while IFS= read -r line; do
               echo "$line"
+              if [[ "$line" == *"Tool call limit exceeded"* ]]; then
+                echo "--- agent hit the tool-call cap without producing a plan."
+              fi
               if [[ "$line" == *"Pull request created"* ]]; then
                 COUNT=$(cat "${TMPCOUNT}")
                 COUNT=$((COUNT + 1))
