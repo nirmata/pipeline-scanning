@@ -1,4 +1,4 @@
-# Helm Chart Policy Enforcement with Nirmata
+# Helm Chart Policy Enforcement with Nirmata.
 
 This branch demonstrates an automated policy enforcement pipeline for a Helm chart using Nirmata's tooling. When a policy violation is detected, the developer can either **auto-fix it via a PR** or **request a policy exception through NCH** — all from the GitHub Actions job summary, without any local tooling.
 
